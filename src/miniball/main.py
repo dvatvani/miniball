@@ -1,4 +1,4 @@
-from miniball.example import hello
+from miniball.game import main
 
 if __name__ == "__main__":
-    print(hello("from miniball"))
+    main()
