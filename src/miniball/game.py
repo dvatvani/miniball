@@ -24,7 +24,7 @@ import math
 
 import arcade
 
-from miniball.ai import BaseAI, GameState, PlayerState, StationaryAI, TeamActions
+from miniball.ai import BaseAI, GameState, PlayerState, TeamActions
 from miniball.config import (
     BALL_DRAG,
     BALL_RADIUS,
@@ -298,9 +298,8 @@ class FootballGame(arcade.Window):
                 )
             )
 
-        # AI engines – fall back to StationaryAI when none is configured.
-        self._ai_a: BaseAI = team_a_config.ai or StationaryAI()
-        self._ai_b: BaseAI = team_b_config.ai or StationaryAI()
+        self._ai_a: BaseAI = team_a_config.ai
+        self._ai_b: BaseAI = team_b_config.ai
 
     @property
     def _controlled(self) -> Player | None:
@@ -686,7 +685,7 @@ def main() -> None:
 
     game = FootballGame(
         team_a_config=TeamConfig(name="Team A", human_controlled=0),
-        team_b_config=TeamConfig(name="Team B", ai=BaselineAI()),
+        team_b_config=TeamConfig(name="Team B", ai=BaselineAI),
     )
     game.run()
 

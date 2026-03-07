@@ -104,6 +104,9 @@ class BaseAI(ABC):
     used for both teams simultaneously if desired.
     """
 
+    def __init__(self, formation: dict[str, list[float]] | None = None) -> None:
+        self.formation: dict[str, list[float]] = formation or {}
+
     @abstractmethod
     def get_actions(self, state: GameState) -> TeamActions:
         """Return actions for every teammate in ``state``.
@@ -181,17 +184,7 @@ class BaselineAI(BaseAI):
     SHOOT_RANGE: float = 28.0  # normalised units to goal centre at which the AI shoots
     HOME_DEADBAND: float = 2.0  # normalised units – don't move if already close to home
 
-    def __init__(self) -> None:
-        # Populated on the first get_actions call from each player's initial position
-        self._home: dict[str, list[float]] = {}
-
     def get_actions(self, state: GameState) -> TeamActions:
-        # Snapshot starting positions once so we can return to them
-        if not self._home:
-            for p in state["players"]:
-                if p["is_teammate"]:
-                    self._home[p["player_id"]] = list(p["location"])
-
         gx, gy = self._goal_center()
         ball_loc = state["ball"]["location"]
 
@@ -219,7 +212,7 @@ class BaselineAI(BaseAI):
 
             elif teammate_has_ball:
                 # ── Drift back to home position to open up space ───────────
-                home = self._home.get(pid, [px, py])
+                home = self.formation.get(pid, [px, py])
                 if self._dist([px, py], home) > self.HOME_DEADBAND:
                     dx, dy = self._norm(home[0] - px, home[1] - py)
                     actions[pid] = {"move": [dx, dy], "shoot": False}

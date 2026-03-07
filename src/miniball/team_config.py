@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from miniball.ai import BaseAI
+from miniball.ai import BaseAI, StationaryAI
 
 
 @dataclass
@@ -22,11 +22,16 @@ DEFAULT_PLAYERS: list[PlayerConfig] = [
 ]
 
 
-@dataclass
 class TeamConfig:
-    name: str
-    players: list[PlayerConfig] = field(default_factory=lambda: list(DEFAULT_PLAYERS))
-    ai: BaseAI | None = None
-    human_controlled: int | None = (
-        None  # index into players; None = fully AI-controlled
-    )
+    def __init__(
+        self,
+        name: str,
+        players: list[PlayerConfig] | None = None,
+        ai: type[BaseAI] = StationaryAI,
+        human_controlled: int | None = None,
+    ) -> None:
+        self.name = name
+        self.players = players if players is not None else list(DEFAULT_PLAYERS)
+        formation = {p.name: [p.start_x, p.start_y] for p in self.players}
+        self.ai = ai(formation=formation)
+        self.human_controlled = human_controlled
