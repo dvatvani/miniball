@@ -24,7 +24,7 @@ import math
 
 import arcade
 
-from miniball.ai import BaseAI, GameState, PlayerState, TeamActions
+from miniball.ai import BaseAI, GameState, MatchState, PlayerState, TeamActions
 from miniball.config import (
     BALL_DRAG,
     BALL_RADIUS,
@@ -41,6 +41,7 @@ from miniball.config import (
     C_TEAM_A,
     C_TEAM_B,
     COOLDOWN_ALPHA,
+    GAME_DURATION,
     GOAL_DEPTH,
     GOAL_H,
     JOY_DEAD_ZONE,
@@ -260,6 +261,8 @@ class FootballGame(arcade.Window):
         self.team_b: list[Player] = []
         self.score_a = 0
         self.score_b = 0
+        self._time_remaining: float = GAME_DURATION
+        self._game_over = False
         self._keys: set[int] = set()
         self._goal_flash = 0.0
 
@@ -369,8 +372,12 @@ class FootballGame(arcade.Window):
         )
 
     def _draw_hud(self) -> None:
+        secs = max(0.0, self._time_remaining)
+        mins = int(secs) // 60
+        sec_part = int(secs) % 60
+        timer_str = f"{mins}:{sec_part:02d}"
         arcade.draw_text(
-            f"Red  {self.score_a} – {self.score_b}  Blue",
+            f"Red  {self.score_a} – {self.score_b}  Blue        {timer_str}",
             SCREEN_W / 2,
             SCREEN_H - 32,
             C_HUD,
@@ -388,7 +395,18 @@ class FootballGame(arcade.Window):
             anchor_x="center",
             anchor_y="center",
         )
-        if self._goal_flash > 0:
+        if self._game_over:
+            arcade.draw_text(
+                "FULL TIME",
+                SCREEN_W / 2,
+                SCREEN_H / 2,
+                (255, 220, 0),
+                font_size=72,
+                anchor_x="center",
+                anchor_y="center",
+                bold=True,
+            )
+        elif self._goal_flash > 0:
             arcade.draw_text(
                 "GOAL!",
                 SCREEN_W / 2,
@@ -415,8 +433,18 @@ class FootballGame(arcade.Window):
     def on_update(self, delta_time: float) -> None:
         dt = min(delta_time, 1 / 30)
 
+        if self._game_over:
+            return
+
         if self._goal_flash > 0:
             self._goal_flash -= dt
+            return
+
+        self._time_remaining -= dt
+        if self._time_remaining <= 0:
+            self._time_remaining = 0.0
+            self._game_over = True
+            self.ball.possessed_by = None
             return
 
         # 1. Tick all player timers
@@ -508,6 +536,14 @@ class FootballGame(arcade.Window):
             for p in self._all_players
         ]
 
+        team_score = self.score_a if perspective_team == "A" else self.score_b
+        oppo_score = self.score_b if perspective_team == "A" else self.score_a
+        match_state: MatchState = {
+            "team_current_score": team_score,
+            "opposition_current_score": oppo_score,
+            "seconds_left": self._time_remaining,
+        }
+
         return {
             "players": players,
             "ball": {
@@ -517,6 +553,7 @@ class FootballGame(arcade.Window):
                     self.ball.vy * vel_sy * sign,
                 ],
             },
+            "match_state": match_state,
         }
 
     def _apply_ai_actions(
@@ -681,11 +718,11 @@ class FootballGame(arcade.Window):
 
 
 def main() -> None:
-    from miniball.ai import BaselineAI
+    from miniball.ai import StationaryAI
 
     game = FootballGame(
         team_a_config=TeamConfig(name="Team A", human_controlled=1),
-        team_b_config=TeamConfig(name="Team B", ai=BaselineAI),
+        team_b_config=TeamConfig(name="Team B", ai=StationaryAI),
     )
     game.run()
 

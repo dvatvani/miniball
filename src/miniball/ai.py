@@ -42,6 +42,11 @@ State schema
         "ball": {
             "location":     [x, y],   # standard pitch coords
             "velocity":     [vx, vy], # standard pitch units / s
+        },
+        "match_state": {
+            "team_current_score":        int,
+            "opposition_current_score":  int,
+            "seconds_left":              float,
         }
     }
 
@@ -79,9 +84,16 @@ class BallState(TypedDict):
     velocity: list[float]  # standard pitch units / s [vx, vy]
 
 
+class MatchState(TypedDict):
+    team_current_score: int
+    opposition_current_score: int
+    seconds_left: float
+
+
 class GameState(TypedDict):
     players: list[PlayerState]
     ball: BallState
+    match_state: MatchState
 
 
 class PlayerAction(TypedDict):
