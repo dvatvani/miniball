@@ -24,57 +24,51 @@ import math
 
 import arcade
 
-from miniball.ai import (
-    BaseAI,
-    BaselineAI,
-    GameState,
-    PitchInfo,
-    PlayerState,
-    TeamActions,
+from miniball.ai import BaseAI, GameState, PlayerState, StationaryAI, TeamActions
+from miniball.config import (
+    BALL_DRAG,
+    BALL_RADIUS,
+    C_BALL,
+    C_BALL_OUTLINE,
+    C_CONTROLLED,
+    C_GOAL,
+    C_GRASS,
+    C_HINT,
+    C_HUD,
+    C_LINE,
+    C_PLAYER_OUTLINE,
+    C_POSSESSION,
+    C_TEAM_A,
+    C_TEAM_B,
+    COOLDOWN_ALPHA,
+    GOAL_DEPTH,
+    GOAL_H,
+    JOY_DEAD_ZONE,
+    MAX_BALL_SPEED,
+    PITCH_B,
+    PITCH_CX,
+    PITCH_CY,
+    PITCH_L,
+    PITCH_R,
+    PITCH_T,
+    PLAYER_RADIUS,
+    PLAYER_SPEED,
+    SCREEN_H,
+    SCREEN_W,
+    SHOOT_SPEED,
+    SHOT_COOLDOWN,
+    STANDARD_PITCH_HEIGHT,
+    STANDARD_PITCH_WIDTH,
+    TACKLE_COOLDOWN,
+    TITLE,
 )
+from miniball.coordinate_transformations import (
+    normalized_to_screen,
+    screen_to_normalized,
+)
+from miniball.team_config import TeamConfig
 
-# ── Window ──────────────────────────────────────────────────────────────────
-SCREEN_W = 1200
-SCREEN_H = 800
-TITLE = "Miniball – 5-a-side Football"
-
-# ── Pitch geometry ───────────────────────────────────────────────────────────
-PITCH_L = 100
-PITCH_R = 1100
-PITCH_B = 75
-PITCH_T = 725
-PITCH_CX = (PITCH_L + PITCH_R) / 2
-PITCH_CY = (PITCH_B + PITCH_T) / 2
-GOAL_H = 140  # vertical opening of each goal
-GOAL_DEPTH = 32  # how far the goal box extends behind the goal line
-
-# ── Physics / timings ────────────────────────────────────────────────────────
-PLAYER_RADIUS = 18
-BALL_RADIUS = 10
-PLAYER_SPEED = 180  # px / s
-BALL_DRAG = 1.3  # speed loss per second (free ball, linear model)
-SHOOT_SPEED = 750  # px / s on a Space-bar kick
-MAX_BALL_SPEED = 700
-TACKLE_COOLDOWN = 1.0  # seconds unable to gain the ball after being tackled
-SHOT_COOLDOWN = 0.4  # seconds before the kicker can re-absorb their own shot
-COOLDOWN_ALPHA = 90  # draw opacity (0–255) while on cooldown (~35 %)
-JOY_DEAD_ZONE = 0.15  # ignore analogue stick values below this magnitude
-
-# ── Colours ──────────────────────────────────────────────────────────────────
-C_GRASS = (34, 139, 34)
-C_LINE = (255, 255, 255)
-C_GOAL = (220, 220, 220)
-C_BALL = (255, 255, 255)
-C_BALL_OUTLINE = (20, 20, 20)
-C_PLAYER_OUTLINE = (20, 20, 20)
-C_CONTROLLED = (255, 215, 0)  # yellow  – keyboard-controlled player
-C_POSSESSION = (255, 255, 255)  # white   – player who has the ball
-C_TEAM_A = (210, 40, 40)  # red   – left side
-C_TEAM_B = (30, 100, 200)  # blue  – right side
-C_HUD = (255, 255, 255)
-C_HINT = (180, 180, 180)
-
-# ── Starting positions  (1 GK + 2 defenders + 2 forwards, mirrored) ─────────
+# ── Default starting positions  (1 GK + 2 defenders + 2 forwards, mirrored) ─────────
 TEAM_A_STARTS: list[tuple[float, float]] = [
     (PITCH_L + 60, PITCH_CY),
     (PITCH_L + 230, PITCH_CY - 120),
@@ -255,11 +249,13 @@ class Player:
 
 
 class FootballGame(arcade.Window):
-    def __init__(self) -> None:
+    def __init__(self, team_a_config: TeamConfig, team_b_config: TeamConfig) -> None:
         super().__init__(SCREEN_W, SCREEN_H, TITLE)
         arcade.set_background_color((30, 30, 30, 255))
 
         self.ball = Ball()
+        self.team_a_config = team_a_config
+        self.team_b_config = team_b_config
         self.team_a: list[Player] = []
         self.team_b: list[Player] = []
         self.score_a = 0
@@ -274,20 +270,43 @@ class FootballGame(arcade.Window):
             self._joystick.open()
         self._joy_shoot_prev = False  # edge-detect the shoot button
 
-        for i, (x, y) in enumerate(TEAM_A_STARTS):
-            self.team_a.append(Player(f"A{i + 1}", x, y, C_TEAM_A, i + 1, team=0))
-        for i, (x, y) in enumerate(TEAM_B_STARTS):
-            self.team_b.append(Player(f"B{i + 1}", x, y, C_TEAM_B, i + 1, team=1))
+        for player_config in team_a_config.players:
+            sx, sy = normalized_to_screen(player_config.start_x, player_config.start_y)
+            self.team_a.append(
+                Player(
+                    player_id=player_config.name,
+                    x=sx,
+                    y=sy,
+                    color=C_TEAM_A,
+                    number=player_config.number,
+                    team=0,
+                )
+            )
+        for player_config in team_b_config.players:
+            # Team B attacks left, so their normalised positions are 180°-rotated
+            sx, sy = normalized_to_screen(
+                player_config.start_x, player_config.start_y, flip=True
+            )
+            self.team_b.append(
+                Player(
+                    player_id=player_config.name,
+                    x=sx,
+                    y=sy,
+                    color=C_TEAM_B,
+                    number=player_config.number,
+                    team=1,
+                )
+            )
 
-        # AI engines – swap these out to change team behaviour.
-        # Team A's non-human players use StationaryAI; team B uses BaselineAI.
-        self._ai_a: BaseAI = BaselineAI(team="A")
-        self._ai_b: BaseAI = BaselineAI(team="B")
+        # AI engines – fall back to StationaryAI when none is configured.
+        self._ai_a: BaseAI = team_a_config.ai or StationaryAI()
+        self._ai_b: BaseAI = team_b_config.ai or StationaryAI()
 
     @property
-    def _controlled(self) -> Player:
-        """Keyboard-controlled player – Red #4."""
-        return self.team_a[3]
+    def _controlled(self) -> Player | None:
+        """Human-controlled player, or ``None`` when the team is fully AI-driven."""
+        idx = self.team_a_config.human_controlled
+        return self.team_a[idx] if idx is not None else None
 
     @property
     def _all_players(self) -> list[Player]:
@@ -405,20 +424,21 @@ class FootballGame(arcade.Window):
         for p in self._all_players:
             p.tick(dt)
 
-        # 2. Move the controlled player
-        dx, dy = self._get_move_input()
-        if dx != 0 or dy != 0:
-            norm = math.hypot(dx, dy)
-            self._controlled.x += (dx / norm) * PLAYER_SPEED * dt
-            self._controlled.y += (dy / norm) * PLAYER_SPEED * dt
-            self._controlled.facing = math.atan2(dy, dx)
+        # 2. Move the controlled player (skipped when team is fully AI-driven)
+        if self._controlled is not None:
+            dx, dy = self._get_move_input()
+            if dx != 0 or dy != 0:
+                norm = math.hypot(dx, dy)
+                self._controlled.x += (dx / norm) * PLAYER_SPEED * dt
+                self._controlled.y += (dy / norm) * PLAYER_SPEED * dt
+                self._controlled.facing = math.atan2(dy, dx)
 
-        # Gamepad shoot button (A / Cross = button 0) – edge-triggered
-        if self._joystick is not None and self._joystick.buttons:
-            shoot_now = bool(self._joystick.buttons[0])
-            if shoot_now and not self._joy_shoot_prev:
-                self._handle_shoot()
-            self._joy_shoot_prev = shoot_now
+            # Gamepad shoot button (A / Cross = button 0) – edge-triggered
+            if self._joystick is not None and self._joystick.buttons:
+                shoot_now = bool(self._joystick.buttons[0])
+                if shoot_now and not self._joy_shoot_prev:
+                    self._handle_shoot()
+                self._joy_shoot_prev = shoot_now
 
         # 2b. AI move + shoot for non-human players.
         #     Each team's state is normalised to attack right; flip_x converts
@@ -466,50 +486,38 @@ class FootballGame(arcade.Window):
         """
         flip = perspective_team == "B"
 
-        def nx(x: float) -> float:
-            # 180° rotation around pitch centre: flip both axes for Team B.
-            # This preserves formation chirality so the AI always sees the
-            # team shape from the same "attacking right" orientation.
-            return float(PITCH_L + PITCH_R) - x if flip else x
+        # screen_to_normalized converts pixel coords → standard pitch coords
+        # (0–120 × 0–80) and, when flip=True, also applies the 180° rotation
+        # that ensures both teams always see themselves attacking right.
+        def pos(x: float, y: float) -> list[float]:
+            nx, ny = screen_to_normalized(x, y, flip=flip)
+            return [nx, ny]
 
-        def ny(y: float) -> float:
-            return float(PITCH_B + PITCH_T) - y if flip else y
+        # Velocities have no positional offset: just scale and optionally negate.
+        vel_sx = STANDARD_PITCH_WIDTH / SCREEN_W
+        vel_sy = STANDARD_PITCH_HEIGHT / SCREEN_H
+        sign = -1 if flip else 1
 
-        possessor_id = (
-            self.ball.possessed_by.player_id
-            if self.ball.possessed_by is not None
-            else None
-        )
         players: list[PlayerState] = [
             {
                 "player_id": p.player_id,
                 "is_teammate": (("A" if p.team == 0 else "B") == perspective_team),
                 "has_ball": self.ball.possessed_by is p,
                 "on_cooldown": p.on_cooldown,
-                "location": [nx(p.x), ny(p.y)],
+                "location": pos(p.x, p.y),
             }
             for p in self._all_players
         ]
-        pitch: PitchInfo = {
-            # The pitch rectangle is symmetric about its centre, so boundaries
-            # are identical before and after the 180° rotation.
-            "left": PITCH_L,
-            "right": PITCH_R,
-            "bottom": PITCH_B,
-            "top": PITCH_T,
-            "goal_width": GOAL_H,
-        }
+
         return {
             "players": players,
             "ball": {
-                "location": [nx(self.ball.x), ny(self.ball.y)],
+                "location": pos(self.ball.x, self.ball.y),
                 "velocity": [
-                    -self.ball.vx if flip else self.ball.vx,
-                    -self.ball.vy if flip else self.ball.vy,
+                    self.ball.vx * vel_sx * sign,
+                    self.ball.vy * vel_sy * sign,
                 ],
-                "possessed_by": possessor_id,
             },
-            "pitch": pitch,
         }
 
     def _apply_ai_actions(
@@ -583,10 +591,13 @@ class FootballGame(arcade.Window):
 
         Defaults to the keyboard-controlled player when called with no
         argument (e.g. from the Space-bar / gamepad-button handler).
-        Silently does nothing if the given player doesn't have the ball.
+        Silently does nothing if the given player doesn't have the ball,
+        or if no human player is configured.
         """
         if player is None:
             player = self._controlled
+        if player is None:
+            return
         if self.ball.possessed_by is not player:
             return
         # Place ball just beyond the player's front edge so it isn't immediately re-absorbed
@@ -671,7 +682,12 @@ class FootballGame(arcade.Window):
 
 
 def main() -> None:
-    game = FootballGame()
+    from miniball.ai import BaselineAI
+
+    game = FootballGame(
+        team_a_config=TeamConfig(name="Team A", human_controlled=0),
+        team_b_config=TeamConfig(name="Team B", ai=BaselineAI()),
+    )
     game.run()
 
 

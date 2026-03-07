@@ -4,26 +4,27 @@ Anatomy of an AI engine
 ────────────────────────
 Subclass ``BaseAI`` and implement ``get_actions(state) -> TeamActions``.
 
-The game calls ``get_actions`` once per frame for each registered AI,
-passing a ``GameState`` that has been normalised so the AI's team is
-**always attacking from left to right**.  The game engine handles all
-coordinate transforms transparently — AI implementations never need to
-know which physical side of the pitch their team occupies.
+An AI instance is a stateless-ish strategy object: it knows nothing about
+which team it controls, which side of the pitch it occupies, or screen
+pixels.  All of that is the game engine's responsibility.  The engine
+prepares a normalised ``GameState`` and interprets the returned
+``TeamActions``, handling coordinate conversion and team assignment itself.
 
 Coordinate conventions
 ───────────────────────
-All coordinates in the state are given in a normalised frame obtained by a
-180° rotation around the pitch centre for the team that attacks left in
-screen space.  This preserves formation chirality, so:
+All values (player locations, ball location, ball velocity, pitch bounds)
+are in **standard pitch space**:
 
-• X increases left → right.  The team's attacking goal is always at
-  ``pitch["right"]``; their own goal is at ``pitch["left"]``.
-• Y increases bottom → top, and the "left flank" of the attack is always
-  the lower half of the pitch (lower Y) regardless of which physical side
-  the team occupies.
-• Ball velocity components follow the same rotation.
-• The ``move`` vector returned by the AI is interpreted in this same frame;
-  the game engine rotates it back to screen coordinates transparently.
+• X ∈ [0, 120], Y ∈ [0, 80]  (matches a standard 120 × 80 pitch).
+• The team's own goal is always at the **left** (low X); the attacking
+  goal is always at the **right** (high X).
+• Y increases bottom → top; the attack's "left flank" is always the
+  lower half of the pitch (low Y) regardless of physical side.
+• Ball velocity is in the same normalised units per second.
+• The ``move`` vector returned in ``PlayerAction`` is also in this frame.
+
+The game engine applies a 180 ° rotation for the team that attacks left in
+screen space, so AI implementations never need to think about it.
 
 State schema
 ────────────
@@ -34,28 +35,20 @@ State schema
                 "is_teammate": bool,
                 "has_ball":    bool,
                 "on_cooldown": bool,   # True = cannot gain ball possession
-                "location":    [x, y], # normalised pixels
+                "location":    [x, y], # standard pitch coords
             },
             ...
         ],
         "ball": {
-            "location":     [x, y],   # normalised pixels
-            "velocity":     [vx, vy], # normalised px / s
-            "possessed_by": str | None,
-        },
-        "pitch": {
-            "left":        float,  # always the team's own goal side
-            "right":       float,  # always the attacking goal side
-            "bottom":      float,
-            "top":         float,
-            "goal_width": float,
-        },
+            "location":     [x, y],   # standard pitch coords
+            "velocity":     [vx, vy], # standard pitch units / s
+        }
     }
 
 Action schema
 ─────────────
     PlayerAction = {
-        "move":  [dx, dy],  # desired direction in normalised coords;
+        "move":  [dx, dy],  # desired direction in standard pitch coords;
                             # magnitude used as speed fraction (0–1),
                             # clipped to 1 if larger
         "shoot": bool,      # request to shoot; ignored if player has no ball
@@ -68,6 +61,8 @@ import math
 from abc import ABC, abstractmethod
 from typing import TypedDict
 
+from miniball.config import STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
+
 # ── State TypedDicts ──────────────────────────────────────────────────────────
 
 
@@ -76,31 +71,21 @@ class PlayerState(TypedDict):
     is_teammate: bool
     has_ball: bool
     on_cooldown: bool  # True = cannot gain ball possession (can still move)
-    location: list[float]  # normalised [x, y]
+    location: list[float]  # standard pitch coords [x, y]
 
 
 class BallState(TypedDict):
-    location: list[float]  # normalised [x, y]
-    velocity: list[float]  # normalised [vx, vy]
-    possessed_by: str | None
-
-
-class PitchInfo(TypedDict):
-    left: float  # own-goal side (x)
-    right: float  # attacking-goal side (x)
-    bottom: float
-    top: float
-    goal_width: float
+    location: list[float]  # standard pitch coords [x, y]
+    velocity: list[float]  # standard pitch units / s [vx, vy]
 
 
 class GameState(TypedDict):
     players: list[PlayerState]
     ball: BallState
-    pitch: PitchInfo
 
 
 class PlayerAction(TypedDict):
-    move: list[float]  # [dx, dy] in normalised coords; magnitude = speed fraction
+    move: list[float]  # [dx, dy] in standard pitch coords; magnitude = speed fraction
     shoot: bool
 
 
@@ -114,26 +99,23 @@ TeamActions = dict[str, PlayerAction]
 class BaseAI(ABC):
     """Abstract base class for all AI engines.
 
-    Parameters
-    ----------
-    team:
-        ``"A"`` or ``"B"`` – which team this engine controls.
+    Instances carry no team information – the game engine assigns them to a
+    team and handles all coordinate transforms.  The same instance can be
+    used for both teams simultaneously if desired.
     """
-
-    def __init__(self, team: str) -> None:
-        self.team = team
 
     @abstractmethod
     def get_actions(self, state: GameState) -> TeamActions:
-        """Return actions for every player on this team.
+        """Return actions for every teammate in ``state``.
 
-        The state is already normalised so teammates always attack right.
+        The state is normalised so teammates always attack right.  Returned
+        move vectors are interpreted in the same normalised frame.
 
         Parameters
         ----------
         state:
-            Normalised game state with ``is_teammate`` set from this team's
-            perspective.
+            Normalised game state.  ``is_teammate`` identifies this AI's
+            players.
 
         Returns
         -------
@@ -146,9 +128,9 @@ class BaseAI(ABC):
     # ── Shared helpers ────────────────────────────────────────────────────────
 
     @staticmethod
-    def _goal_center(pitch: PitchInfo) -> tuple[float, float]:
+    def _goal_center() -> tuple[float, float]:
         """Centre of the attacking goal (always the right goal in normalised view)."""
-        return pitch["right"], (pitch["top"] + pitch["bottom"]) / 2
+        return STANDARD_PITCH_WIDTH, (STANDARD_PITCH_HEIGHT) / 2
 
     @staticmethod
     def _dist(a: list[float], b: list[float]) -> float:
@@ -183,7 +165,7 @@ class BaselineAI(BaseAI):
     Decision hierarchy (evaluated per player, per frame):
 
     1. **Has the ball** → dribble straight toward the attacking goal;
-       shoot when within ``SHOOT_RANGE`` pixels of the goal centre.
+       shoot when within ``SHOOT_RANGE`` normalised units of the goal centre.
     2. **No ball / opposition has it** → press toward the ball at full speed.
     3. **Teammate has the ball** → drift back toward home position to avoid
        crowding the ball carrier and leave space open.
@@ -191,15 +173,15 @@ class BaselineAI(BaseAI):
     Home positions are cached from each player's location on the first frame
     so the AI naturally inherits whatever starting layout the game uses.
 
-    Because the state is always normalised to attack right, this class
-    contains no team-side or coordinate-direction logic.
+    Because the state is always normalised to attack right and expressed in
+    standard pitch coordinates, this class contains no team-side, pixel, or
+    coordinate-direction logic.
     """
 
-    SHOOT_RANGE: float = 280.0  # px to goal centre at which the AI shoots
-    HOME_DEADBAND: float = 20.0  # px – don't move if already close to home
+    SHOOT_RANGE: float = 28.0  # normalised units to goal centre at which the AI shoots
+    HOME_DEADBAND: float = 2.0  # normalised units – don't move if already close to home
 
-    def __init__(self, team: str) -> None:
-        super().__init__(team)
+    def __init__(self) -> None:
         # Populated on the first get_actions call from each player's initial position
         self._home: dict[str, list[float]] = {}
 
@@ -210,8 +192,7 @@ class BaselineAI(BaseAI):
                 if p["is_teammate"]:
                     self._home[p["player_id"]] = list(p["location"])
 
-        pitch = state["pitch"]
-        gx, gy = self._goal_center(pitch)
+        gx, gy = self._goal_center()
         ball_loc = state["ball"]["location"]
 
         teammate_has_ball = any(
