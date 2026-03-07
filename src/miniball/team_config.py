@@ -56,3 +56,6 @@ class TeamConfig:
         assert all(0 <= p.y <= STANDARD_PITCH_HEIGHT for p in self.players), (
             "Players must have a y position between 0 and STANDARD_PITCH_HEIGHT"
         )
+        assert len(set(p.number for p in self.players)) == len(self.players), (
+            "Players must have unique numbers"
+        )
