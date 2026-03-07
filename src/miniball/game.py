@@ -24,6 +24,15 @@ import math
 
 import arcade
 
+from miniball.ai import (
+    BaseAI,
+    BaselineAI,
+    GameState,
+    PitchInfo,
+    PlayerState,
+    TeamActions,
+)
+
 # ── Window ──────────────────────────────────────────────────────────────────
 SCREEN_W = 1200
 SCREEN_H = 800
@@ -161,12 +170,14 @@ class Ball:
 class Player:
     def __init__(
         self,
+        player_id: str,
         x: float,
         y: float,
         color: tuple[int, int, int],
         number: int,
         team: int,
     ) -> None:
+        self.player_id = player_id
         self.start_x = x
         self.start_y = y
         self.x = x
@@ -258,9 +269,14 @@ class FootballGame(arcade.Window):
         self._joy_shoot_prev = False  # edge-detect the shoot button
 
         for i, (x, y) in enumerate(TEAM_A_STARTS):
-            self.team_a.append(Player(x, y, C_TEAM_A, i + 1, team=0))
+            self.team_a.append(Player(f"A{i + 1}", x, y, C_TEAM_A, i + 1, team=0))
         for i, (x, y) in enumerate(TEAM_B_STARTS):
-            self.team_b.append(Player(x, y, C_TEAM_B, i + 1, team=1))
+            self.team_b.append(Player(f"B{i + 1}", x, y, C_TEAM_B, i + 1, team=1))
+
+        # AI engines – swap these out to change team behaviour.
+        # Team A's non-human players use StationaryAI; team B uses BaselineAI.
+        self._ai_a: BaseAI = BaselineAI(team="A")
+        self._ai_b: BaseAI = BaselineAI(team="B")
 
     @property
     def _controlled(self) -> Player:
@@ -399,6 +415,19 @@ class FootballGame(arcade.Window):
                 self._handle_shoot()
             self._joy_shoot_prev = shoot_now
 
+        # 2b. AI move + shoot for non-human players
+        #     Build state once per team (is_teammate flips between the two).
+        state_a = self._build_game_state("A")
+        ai_a_actions = self._ai_a.get_actions(state_a)
+        self._apply_ai_actions(
+            [p for p in self.team_a if p is not self._controlled],
+            ai_a_actions,
+            dt,
+        )
+        state_b = self._build_game_state("B")
+        ai_b_actions = self._ai_b.get_actions(state_b)
+        self._apply_ai_actions(self.team_b, ai_b_actions, dt)
+
         # 3. Clamp all players to pitch
         self._clamp_players()
 
@@ -414,6 +443,71 @@ class FootballGame(arcade.Window):
 
         # 7. Goal detection
         self._check_goals()
+
+    # ── AI interface ─────────────────────────────────────────────────────────
+
+    def _build_game_state(self, perspective_team: str) -> GameState:
+        """Snapshot the current game into the AI state dict.
+
+        ``is_teammate`` is set to ``True`` for players on ``perspective_team``
+        so each AI only needs to check that flag rather than compare team IDs.
+        """
+        possessor_id = (
+            self.ball.possessed_by.player_id
+            if self.ball.possessed_by is not None
+            else None
+        )
+        players: list[PlayerState] = [
+            {
+                "player_id": p.player_id,
+                "team": "A" if p.team == 0 else "B",
+                "is_teammate": (("A" if p.team == 0 else "B") == perspective_team),
+                "has_ball": self.ball.possessed_by is p,
+                "stunned": p.stunned,
+                "location": [p.x, p.y],
+                "facing": p.facing,
+            }
+            for p in self._all_players
+        ]
+        pitch: PitchInfo = {
+            "left": PITCH_L,
+            "right": PITCH_R,
+            "bottom": PITCH_B,
+            "top": PITCH_T,
+            "goal_height": GOAL_H,
+            "attacking_direction": 1 if perspective_team == "A" else -1,
+        }
+        return {
+            "players": players,
+            "ball": {
+                "location": [self.ball.x, self.ball.y],
+                "velocity": [self.ball.vx, self.ball.vy],
+                "possessed_by": possessor_id,
+            },
+            "pitch": pitch,
+        }
+
+    def _apply_ai_actions(
+        self,
+        players: list[Player],
+        actions: TeamActions,
+        dt: float,
+    ) -> None:
+        """Move and optionally shoot for each player according to AI actions."""
+        for p in players:
+            action = actions.get(p.player_id)
+            if action is None or p.stunned:
+                continue
+            dx, dy = action["move"]
+            if dx != 0 or dy != 0:
+                norm = math.hypot(dx, dy)
+                # Allow sub-1 magnitude from analogue-style AI outputs
+                speed_frac = min(norm, 1.0)
+                p.x += (dx / norm) * PLAYER_SPEED * speed_frac * dt
+                p.y += (dy / norm) * PLAYER_SPEED * speed_frac * dt
+                p.facing = math.atan2(dy, dx)
+            if action["shoot"]:
+                self._handle_shoot(p)
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -447,18 +541,28 @@ class FootballGame(arcade.Window):
 
         return dx, dy
 
-    def _handle_shoot(self) -> None:
-        """Launch the ball in the facing direction. Only works when we have the ball."""
-        if self.ball.possessed_by is not self._controlled:
+    def _handle_shoot(self, player: Player | None = None) -> None:
+        """Launch the ball in ``player``'s facing direction.
+
+        Defaults to the keyboard-controlled player when called with no
+        argument (e.g. from the Space-bar / gamepad-button handler).
+        Silently does nothing if the given player doesn't have the ball.
+        """
+        if player is None:
+            player = self._controlled
+        if self.ball.possessed_by is not player:
             return
-        p = self._controlled
         # Place ball just beyond the player's front edge so it isn't immediately re-absorbed
         self.ball.possessed_by = None
-        self.ball.x = p.x + math.cos(p.facing) * (PLAYER_RADIUS + BALL_RADIUS + 2)
-        self.ball.y = p.y + math.sin(p.facing) * (PLAYER_RADIUS + BALL_RADIUS + 2)
-        self.ball.vx = math.cos(p.facing) * SHOOT_SPEED
-        self.ball.vy = math.sin(p.facing) * SHOOT_SPEED
-        p.possession_cooldown = SHOT_COOLDOWN
+        self.ball.x = player.x + math.cos(player.facing) * (
+            PLAYER_RADIUS + BALL_RADIUS + 2
+        )
+        self.ball.y = player.y + math.sin(player.facing) * (
+            PLAYER_RADIUS + BALL_RADIUS + 2
+        )
+        self.ball.vx = math.cos(player.facing) * SHOOT_SPEED
+        self.ball.vy = math.sin(player.facing) * SHOOT_SPEED
+        player.possession_cooldown = SHOT_COOLDOWN
 
     def _update_possession(self) -> None:
         possessor = self.ball.possessed_by
