@@ -271,7 +271,7 @@ class FootballGame(arcade.Window):
         self._joy_shoot_prev = False  # edge-detect the shoot button
 
         for player_config in team_a_config.players:
-            sx, sy = normalized_to_screen(player_config.start_x, player_config.start_y)
+            sx, sy = normalized_to_screen(player_config.x / 2, player_config.y)
             self.team_a.append(
                 Player(
                     player_id=player_config.name,
@@ -285,7 +285,7 @@ class FootballGame(arcade.Window):
         for player_config in team_b_config.players:
             # Team B attacks left, so their normalised positions are 180°-rotated
             sx, sy = normalized_to_screen(
-                player_config.start_x, player_config.start_y, flip=True
+                player_config.x / 2, player_config.y, flip=True
             )
             self.team_b.append(
                 Player(
@@ -684,7 +684,7 @@ def main() -> None:
     from miniball.ai import BaselineAI
 
     game = FootballGame(
-        team_a_config=TeamConfig(name="Team A", human_controlled=0),
+        team_a_config=TeamConfig(name="Team A", human_controlled=1),
         team_b_config=TeamConfig(name="Team B", ai=BaselineAI),
     )
     game.run()
