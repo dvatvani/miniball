@@ -19,7 +19,7 @@ State schema
                 "team":        "A" | "B",
                 "is_teammate": bool,
                 "has_ball":    bool,
-                "stunned":     bool,
+                "on_cooldown": bool,          # True = cannot gain ball possession
                 "location":    [x, y],        # screen pixels
                 "facing":      float,         # radians
             },
@@ -64,7 +64,7 @@ class PlayerState(TypedDict):
     team: str
     is_teammate: bool
     has_ball: bool
-    stunned: bool
+    on_cooldown: bool  # True = cannot gain ball possession (can still move)
     location: list[float]
     facing: float
 

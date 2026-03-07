@@ -51,12 +51,13 @@ GOAL_DEPTH = 32  # how far the goal box extends behind the goal line
 # ── Physics / timings ────────────────────────────────────────────────────────
 PLAYER_RADIUS = 18
 BALL_RADIUS = 10
-PLAYER_SPEED = 220  # px / s
-BALL_DRAG = 1.8  # speed loss per second (free ball, linear model)
+PLAYER_SPEED = 180  # px / s
+BALL_DRAG = 1.3  # speed loss per second (free ball, linear model)
 SHOOT_SPEED = 750  # px / s on a Space-bar kick
 MAX_BALL_SPEED = 700
-STUN_DURATION = 1.0  # seconds frozen after losing the ball
+TACKLE_COOLDOWN = 1.0  # seconds unable to gain the ball after being tackled
 SHOT_COOLDOWN = 0.4  # seconds before the kicker can re-absorb their own shot
+COOLDOWN_ALPHA = 90  # draw opacity (0–255) while on cooldown (~35 %)
 JOY_DEAD_ZONE = 0.15  # ignore analogue stick values below this magnitude
 
 # ── Colours ──────────────────────────────────────────────────────────────────
@@ -68,7 +69,6 @@ C_BALL_OUTLINE = (20, 20, 20)
 C_PLAYER_OUTLINE = (20, 20, 20)
 C_CONTROLLED = (255, 215, 0)  # yellow  – keyboard-controlled player
 C_POSSESSION = (255, 255, 255)  # white   – player who has the ball
-C_STUN = (255, 80, 0)  # orange  – stunned (just lost the ball)
 C_TEAM_A = (210, 40, 40)  # red   – left side
 C_TEAM_B = (30, 100, 200)  # blue  – right side
 C_HUD = (255, 255, 255)
@@ -187,44 +187,50 @@ class Player:
         self.team = team
         # Face toward the opposing half at kick-off
         self.facing: float = 0.0 if team == 0 else math.pi
-        self.stun_timer: float = 0.0  # countdown after losing the ball
-        self.possession_cooldown: float = 0.0  # brief lockout after shooting
+        # Single cooldown timer – blocks ball possession regains only;
+        # movement is always permitted.  Set to TACKLE_COOLDOWN after a
+        # tackle or SHOT_COOLDOWN after shooting (whichever is larger).
+        self.cooldown_timer: float = 0.0
 
     @property
-    def stunned(self) -> bool:
-        return self.stun_timer > 0
+    def on_cooldown(self) -> bool:
+        return self.cooldown_timer > 0
 
     @property
     def can_gain_possession(self) -> bool:
-        return self.stun_timer <= 0 and self.possession_cooldown <= 0
+        return self.cooldown_timer <= 0
 
     def tick(self, dt: float) -> None:
-        if self.stun_timer > 0:
-            self.stun_timer = max(0.0, self.stun_timer - dt)
-        if self.possession_cooldown > 0:
-            self.possession_cooldown = max(0.0, self.possession_cooldown - dt)
+        if self.cooldown_timer > 0:
+            self.cooldown_timer = max(0.0, self.cooldown_timer - dt)
 
     def reset(self) -> None:
         self.x = self.start_x
         self.y = self.start_y
         self.facing = 0.0 if self.team == 0 else math.pi
-        self.stun_timer = 0.0
-        self.possession_cooldown = 0.0
+        self.cooldown_timer = 0.0
 
     def draw(self, highlight: bool = False, has_ball: bool = False) -> None:
-        # Outer rings drawn first so the body is painted on top
-        if self.stunned:
-            # Orange ring – frozen after losing the ball
-            arcade.draw_circle_outline(self.x, self.y, PLAYER_RADIUS + 9, C_STUN, 3)
+        # Cooldown players are faded to make them visually distinct
+        if self.on_cooldown:
+            r, g, b = self.color[:3]
+            fill_color: tuple[int, ...] = (r, g, b, COOLDOWN_ALPHA)
+            outline_color: tuple[int, ...] = (*C_PLAYER_OUTLINE, COOLDOWN_ALPHA)
+            text_color: tuple[int, ...] = (255, 255, 255, COOLDOWN_ALPHA)
+        else:
+            fill_color = self.color
+            outline_color = C_PLAYER_OUTLINE
+            text_color = C_LINE
+
+        # Possession ring drawn before body so body paints over the inner edge
         if has_ball:
-            # White ring – possession indicator
             arcade.draw_circle_outline(
                 self.x, self.y, PLAYER_RADIUS + 5, C_POSSESSION, 3
             )
 
         # Player body
-        arcade.draw_circle_filled(self.x, self.y, PLAYER_RADIUS, self.color)
-        arcade.draw_circle_outline(self.x, self.y, PLAYER_RADIUS, C_PLAYER_OUTLINE, 2)
+        arcade.draw_circle_filled(self.x, self.y, PLAYER_RADIUS, fill_color)
+        arcade.draw_circle_outline(self.x, self.y, PLAYER_RADIUS, outline_color, 2)
 
         # Yellow ring – keyboard-controlled player (drawn over body outline)
         if highlight:
@@ -237,7 +243,7 @@ class Player:
             str(self.number),
             self.x,
             self.y,
-            C_LINE,
+            text_color,
             font_size=11,
             anchor_x="center",
             anchor_y="center",
@@ -399,14 +405,13 @@ class FootballGame(arcade.Window):
         for p in self._all_players:
             p.tick(dt)
 
-        # 2. Move the controlled player (blocked while stunned)
-        if not self._controlled.stunned:
-            dx, dy = self._get_move_input()
-            if dx != 0 or dy != 0:
-                norm = math.hypot(dx, dy)
-                self._controlled.x += (dx / norm) * PLAYER_SPEED * dt
-                self._controlled.y += (dy / norm) * PLAYER_SPEED * dt
-                self._controlled.facing = math.atan2(dy, dx)
+        # 2. Move the controlled player
+        dx, dy = self._get_move_input()
+        if dx != 0 or dy != 0:
+            norm = math.hypot(dx, dy)
+            self._controlled.x += (dx / norm) * PLAYER_SPEED * dt
+            self._controlled.y += (dy / norm) * PLAYER_SPEED * dt
+            self._controlled.facing = math.atan2(dy, dx)
 
         # Gamepad shoot button (A / Cross = button 0) – edge-triggered
         if self._joystick is not None and self._joystick.buttons:
@@ -463,7 +468,7 @@ class FootballGame(arcade.Window):
                 "team": "A" if p.team == 0 else "B",
                 "is_teammate": (("A" if p.team == 0 else "B") == perspective_team),
                 "has_ball": self.ball.possessed_by is p,
-                "stunned": p.stunned,
+                "on_cooldown": p.on_cooldown,
                 "location": [p.x, p.y],
                 "facing": p.facing,
             }
@@ -496,7 +501,7 @@ class FootballGame(arcade.Window):
         """Move and optionally shoot for each player according to AI actions."""
         for p in players:
             action = actions.get(p.player_id)
-            if action is None or p.stunned:
+            if action is None:
                 continue
             dx, dy = action["move"]
             if dx != 0 or dy != 0:
@@ -562,7 +567,7 @@ class FootballGame(arcade.Window):
         )
         self.ball.vx = math.cos(player.facing) * SHOOT_SPEED
         self.ball.vy = math.sin(player.facing) * SHOOT_SPEED
-        player.possession_cooldown = SHOT_COOLDOWN
+        player.cooldown_timer = max(player.cooldown_timer, SHOT_COOLDOWN)
 
     def _update_possession(self) -> None:
         possessor = self.ball.possessed_by
@@ -578,7 +583,7 @@ class FootballGame(arcade.Window):
                 if dist < PLAYER_RADIUS * 2:
                     old = possessor
                     self.ball.possessed_by = p
-                    old.stun_timer = STUN_DURATION
+                    old.cooldown_timer = TACKLE_COOLDOWN
                     break  # one tackle per frame
         else:
             # First eligible player whose body overlaps the ball absorbs it
