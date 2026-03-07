@@ -11,9 +11,11 @@ Possession model
   possessor's body steals possession immediately.
 • The player who lost the ball is frozen for STUN_DURATION seconds
   (orange ring) and cannot gain possession while stunned.
-• The controlled player shoots with Space: the ball is launched in the
-  direction they are facing, and they get a brief pickup cooldown so they
-  don't immediately re-absorb their own shot.
+• The controlled player shoots with Space / gamepad button A: the ball is
+  launched in the direction they are facing, and they get a brief pickup
+  cooldown so they don't immediately re-absorb their own shot.
+• A gamepad's left analogue stick gives full 360° motion; keyboard arrow
+  keys are still supported as a fallback.
 """
 
 from __future__ import annotations
@@ -46,6 +48,7 @@ SHOOT_SPEED = 750  # px / s on a Space-bar kick
 MAX_BALL_SPEED = 700
 STUN_DURATION = 1.0  # seconds frozen after losing the ball
 SHOT_COOLDOWN = 0.4  # seconds before the kicker can re-absorb their own shot
+JOY_DEAD_ZONE = 0.15  # ignore analogue stick values below this magnitude
 
 # ── Colours ──────────────────────────────────────────────────────────────────
 C_GRASS = (34, 139, 34)
@@ -247,6 +250,13 @@ class FootballGame(arcade.Window):
         self._keys: set[int] = set()
         self._goal_flash = 0.0
 
+        # Gamepad – use the first connected controller if one is present
+        joysticks = arcade.get_joysticks()
+        self._joystick = joysticks[0] if joysticks else None
+        if self._joystick is not None:
+            self._joystick.open()
+        self._joy_shoot_prev = False  # edge-detect the shoot button
+
         for i, (x, y) in enumerate(TEAM_A_STARTS):
             self.team_a.append(Player(x, y, C_TEAM_A, i + 1, team=0))
         for i, (x, y) in enumerate(TEAM_B_STARTS):
@@ -330,7 +340,7 @@ class FootballGame(arcade.Window):
             bold=True,
         )
         arcade.draw_text(
-            "Arrows to move · Space to shoot · You are Red #4 (yellow ring)",
+            "Arrows / L-stick · Space / A to shoot · You are Red #4 (yellow ring)",
             SCREEN_W / 2,
             28,
             C_HINT,
@@ -375,21 +385,19 @@ class FootballGame(arcade.Window):
 
         # 2. Move the controlled player (blocked while stunned)
         if not self._controlled.stunned:
-            dx = dy = 0.0
-            if arcade.key.LEFT in self._keys:
-                dx -= 1
-            if arcade.key.RIGHT in self._keys:
-                dx += 1
-            if arcade.key.DOWN in self._keys:
-                dy -= 1
-            if arcade.key.UP in self._keys:
-                dy += 1
-
+            dx, dy = self._get_move_input()
             if dx != 0 or dy != 0:
                 norm = math.hypot(dx, dy)
                 self._controlled.x += (dx / norm) * PLAYER_SPEED * dt
                 self._controlled.y += (dy / norm) * PLAYER_SPEED * dt
                 self._controlled.facing = math.atan2(dy, dx)
+
+        # Gamepad shoot button (A / Cross = button 0) – edge-triggered
+        if self._joystick is not None and self._joystick.buttons:
+            shoot_now = bool(self._joystick.buttons[0])
+            if shoot_now and not self._joy_shoot_prev:
+                self._handle_shoot()
+            self._joy_shoot_prev = shoot_now
 
         # 3. Clamp all players to pitch
         self._clamp_players()
@@ -408,6 +416,36 @@ class FootballGame(arcade.Window):
         self._check_goals()
 
     # ── Helpers ──────────────────────────────────────────────────────────────
+
+    def _get_move_input(self) -> tuple[float, float]:
+        """Return a (dx, dy) vector from keyboard or gamepad left stick.
+
+        Keyboard produces unit-axis values; the analogue stick returns raw
+        floats in [-1, 1] so diagonal movement naturally scales to the true
+        stick magnitude (full 360° at any speed up to PLAYER_SPEED).
+        Gamepad input takes priority when the stick is outside the dead zone.
+        """
+        dx = dy = 0.0
+
+        # Keyboard
+        if arcade.key.LEFT in self._keys:
+            dx -= 1.0
+        if arcade.key.RIGHT in self._keys:
+            dx += 1.0
+        if arcade.key.DOWN in self._keys:
+            dy -= 1.0
+        if arcade.key.UP in self._keys:
+            dy += 1.0
+
+        # Gamepad left analogue stick (overrides keyboard when active)
+        if self._joystick is not None:
+            jx = self._joystick.x
+            # Pyglet's Y axis is inverted relative to arcade's screen coordinates
+            jy = -self._joystick.y
+            if math.hypot(jx, jy) > JOY_DEAD_ZONE:
+                dx, dy = jx, jy
+
+        return dx, dy
 
     def _handle_shoot(self) -> None:
         """Launch the ball in the facing direction. Only works when we have the ball."""
