@@ -2,6 +2,18 @@
 
 Top-down view, no sprites: players are coloured circles, the ball is a white
 circle.  One player (yellow ring) is controlled with the arrow keys.
+
+Possession model
+────────────────
+• When a free ball touches any player, that player absorbs it instantly.
+• The ball sits at the possessor's front edge and travels with them.
+• An opposition player who is NOT stunned and whose body overlaps the
+  possessor's body steals possession immediately.
+• The player who lost the ball is frozen for STUN_DURATION seconds
+  (orange ring) and cannot gain possession while stunned.
+• The controlled player shoots with Space: the ball is launched in the
+  direction they are facing, and they get a brief pickup cooldown so they
+  don't immediately re-absorb their own shot.
 """
 
 from __future__ import annotations
@@ -25,13 +37,15 @@ PITCH_CY = (PITCH_B + PITCH_T) / 2
 GOAL_H = 140  # vertical opening of each goal
 GOAL_DEPTH = 32  # how far the goal box extends behind the goal line
 
-# ── Physics ──────────────────────────────────────────────────────────────────
+# ── Physics / timings ────────────────────────────────────────────────────────
 PLAYER_RADIUS = 18
 BALL_RADIUS = 10
 PLAYER_SPEED = 220  # px / s
-BALL_DRAG = 1.8  # speed loss per second (linear model: v -= drag * v * dt)
-KICK_IMPULSE = 380  # px / s transferred to ball on contact
+BALL_DRAG = 1.8  # speed loss per second (free ball, linear model)
+SHOOT_SPEED = 750  # px / s on a Space-bar kick
 MAX_BALL_SPEED = 700
+STUN_DURATION = 1.0  # seconds frozen after losing the ball
+SHOT_COOLDOWN = 0.4  # seconds before the kicker can re-absorb their own shot
 
 # ── Colours ──────────────────────────────────────────────────────────────────
 C_GRASS = (34, 139, 34)
@@ -40,9 +54,11 @@ C_GOAL = (220, 220, 220)
 C_BALL = (255, 255, 255)
 C_BALL_OUTLINE = (20, 20, 20)
 C_PLAYER_OUTLINE = (20, 20, 20)
-C_CONTROLLED_RING = (255, 215, 0)
-C_TEAM_A = (210, 40, 40)  # red  – left side
-C_TEAM_B = (30, 100, 200)  # blue – right side
+C_CONTROLLED = (255, 215, 0)  # yellow  – keyboard-controlled player
+C_POSSESSION = (255, 255, 255)  # white   – player who has the ball
+C_STUN = (255, 80, 0)  # orange  – stunned (just lost the ball)
+C_TEAM_A = (210, 40, 40)  # red   – left side
+C_TEAM_B = (30, 100, 200)  # blue  – right side
 C_HUD = (255, 255, 255)
 C_HINT = (180, 180, 180)
 
@@ -72,12 +88,14 @@ class Ball:
         self.y = PITCH_CY
         self.vx = 0.0
         self.vy = 0.0
+        self.possessed_by: Player | None = None
 
     def reset(self) -> None:
         self.x = PITCH_CX
         self.y = PITCH_CY
         self.vx = 0.0
         self.vy = 0.0
+        self.possessed_by = None
 
     def apply_impulse(self, ix: float, iy: float) -> None:
         self.vx += ix
@@ -89,10 +107,18 @@ class Ball:
             self.vy *= scale
 
     def update(self, dt: float) -> None:
+        if self.possessed_by is not None:
+            # Sit at the possessor's front edge
+            p = self.possessed_by
+            self.x = p.x + math.cos(p.facing) * PLAYER_RADIUS
+            self.y = p.y + math.sin(p.facing) * PLAYER_RADIUS
+            self.vx = 0.0
+            self.vy = 0.0
+            return
+
         self.x += self.vx * dt
         self.y += self.vy * dt
 
-        # Drag (time-based so it's frame-rate independent)
         drag_factor = max(0.0, 1.0 - BALL_DRAG * dt)
         self.vx *= drag_factor
         self.vy *= drag_factor
@@ -108,7 +134,7 @@ class Ball:
             self.y = PITCH_T - BALL_RADIUS
             self.vy = -abs(self.vy)
 
-        # Left / right walls – bounce unless ball is in the goal opening
+        # Side walls – pass through goal opening
         if self.x - BALL_RADIUS < PITCH_L and not (goal_lo <= self.y <= goal_hi):
             self.x = PITCH_L + BALL_RADIUS
             self.vx = abs(self.vx)
@@ -116,7 +142,7 @@ class Ball:
             self.x = PITCH_R - BALL_RADIUS
             self.vx = -abs(self.vx)
 
-        # Back wall of each goal box (ball can't exit through the net back)
+        # Back wall of each goal box
         if self.x - BALL_RADIUS < PITCH_L - GOAL_DEPTH and goal_lo <= self.y <= goal_hi:
             self.x = PITCH_L - GOAL_DEPTH + BALL_RADIUS
             self.vx = abs(self.vx)
@@ -145,18 +171,54 @@ class Player:
         self.color = color
         self.number = number
         self.team = team
+        # Face toward the opposing half at kick-off
+        self.facing: float = 0.0 if team == 0 else math.pi
+        self.stun_timer: float = 0.0  # countdown after losing the ball
+        self.possession_cooldown: float = 0.0  # brief lockout after shooting
+
+    @property
+    def stunned(self) -> bool:
+        return self.stun_timer > 0
+
+    @property
+    def can_gain_possession(self) -> bool:
+        return self.stun_timer <= 0 and self.possession_cooldown <= 0
+
+    def tick(self, dt: float) -> None:
+        if self.stun_timer > 0:
+            self.stun_timer = max(0.0, self.stun_timer - dt)
+        if self.possession_cooldown > 0:
+            self.possession_cooldown = max(0.0, self.possession_cooldown - dt)
 
     def reset(self) -> None:
         self.x = self.start_x
         self.y = self.start_y
+        self.facing = 0.0 if self.team == 0 else math.pi
+        self.stun_timer = 0.0
+        self.possession_cooldown = 0.0
 
-    def draw(self, highlight: bool = False) -> None:
+    def draw(self, highlight: bool = False, has_ball: bool = False) -> None:
+        # Outer rings drawn first so the body is painted on top
+        if self.stunned:
+            # Orange ring – frozen after losing the ball
+            arcade.draw_circle_outline(self.x, self.y, PLAYER_RADIUS + 9, C_STUN, 3)
+        if has_ball:
+            # White ring – possession indicator
+            arcade.draw_circle_outline(
+                self.x, self.y, PLAYER_RADIUS + 5, C_POSSESSION, 3
+            )
+
+        # Player body
         arcade.draw_circle_filled(self.x, self.y, PLAYER_RADIUS, self.color)
         arcade.draw_circle_outline(self.x, self.y, PLAYER_RADIUS, C_PLAYER_OUTLINE, 2)
+
+        # Yellow ring – keyboard-controlled player (drawn over body outline)
         if highlight:
             arcade.draw_circle_outline(
-                self.x, self.y, PLAYER_RADIUS + 5, C_CONTROLLED_RING, 2
+                self.x, self.y, PLAYER_RADIUS + 2, C_CONTROLLED, 2
             )
+
+        # Jersey number
         arcade.draw_text(
             str(self.number),
             self.x,
@@ -183,7 +245,7 @@ class FootballGame(arcade.Window):
         self.score_a = 0
         self.score_b = 0
         self._keys: set[int] = set()
-        self._goal_flash = 0.0  # seconds remaining to show goal flash
+        self._goal_flash = 0.0
 
         for i, (x, y) in enumerate(TEAM_A_STARTS):
             self.team_a.append(Player(x, y, C_TEAM_A, i + 1, team=0))
@@ -192,7 +254,7 @@ class FootballGame(arcade.Window):
 
     @property
     def _controlled(self) -> Player:
-        """The player controlled by keyboard input (team A forward #4)."""
+        """Keyboard-controlled player – Red #4."""
         return self.team_a[3]
 
     @property
@@ -206,7 +268,10 @@ class FootballGame(arcade.Window):
         self._draw_pitch()
         self.ball.draw()
         for p in self._all_players:
-            p.draw(highlight=(p is self._controlled))
+            p.draw(
+                highlight=(p is self._controlled),
+                has_ball=(self.ball.possessed_by is p),
+            )
         self._draw_hud()
 
     def _draw_pitch(self) -> None:
@@ -214,22 +279,14 @@ class FootballGame(arcade.Window):
         goal_lo = PITCH_CY - GOAL_H / 2
         goal_hi = PITCH_CY + GOAL_H / 2
 
-        # Grass
         arcade.draw_lrbt_rectangle_filled(PITCH_L, PITCH_R, PITCH_B, PITCH_T, C_GRASS)
-
-        # Pitch outline
         arcade.draw_lrbt_rectangle_outline(
             PITCH_L, PITCH_R, PITCH_B, PITCH_T, C_LINE, lw
         )
-
-        # Centre line
         arcade.draw_line(PITCH_CX, PITCH_B, PITCH_CX, PITCH_T, C_LINE, lw)
-
-        # Centre circle + spot
         arcade.draw_circle_outline(PITCH_CX, PITCH_CY, 70, C_LINE, lw)
         arcade.draw_circle_filled(PITCH_CX, PITCH_CY, 4, C_LINE)
 
-        # Penalty areas
         pa_w, pa_h = 150, 260
         arcade.draw_lrbt_rectangle_outline(
             PITCH_L,
@@ -248,7 +305,6 @@ class FootballGame(arcade.Window):
             lw,
         )
 
-        # Goals (box behind goal line)
         arcade.draw_lrbt_rectangle_filled(
             PITCH_L - GOAL_DEPTH, PITCH_L, goal_lo, goal_hi, C_GOAL
         )
@@ -274,7 +330,7 @@ class FootballGame(arcade.Window):
             bold=True,
         )
         arcade.draw_text(
-            "Arrow keys to move · You are Red #4 (yellow ring)",
+            "Arrows to move · Space to shoot · You are Red #4 (yellow ring)",
             SCREEN_W / 2,
             28,
             C_HINT,
@@ -298,6 +354,8 @@ class FootballGame(arcade.Window):
 
     def on_key_press(self, key: int, modifiers: int) -> None:
         self._keys.add(key)
+        if key == arcade.key.SPACE:
+            self._handle_shoot()
 
     def on_key_release(self, key: int, modifiers: int) -> None:
         self._keys.discard(key)
@@ -309,57 +367,88 @@ class FootballGame(arcade.Window):
 
         if self._goal_flash > 0:
             self._goal_flash -= dt
-            return  # freeze play during flash
+            return
 
-        # Move controlled player
-        dx = dy = 0.0
-        if arcade.key.LEFT in self._keys:
-            dx -= 1
-        if arcade.key.RIGHT in self._keys:
-            dx += 1
-        if arcade.key.DOWN in self._keys:
-            dy -= 1
-        if arcade.key.UP in self._keys:
-            dy += 1
-
-        if dx != 0 or dy != 0:
-            norm = math.hypot(dx, dy)
-            self._controlled.x += (dx / norm) * PLAYER_SPEED * dt
-            self._controlled.y += (dy / norm) * PLAYER_SPEED * dt
-
-        # Clamp all players inside pitch
+        # 1. Tick all player timers
         for p in self._all_players:
-            p.x = max(PITCH_L + PLAYER_RADIUS, min(PITCH_R - PLAYER_RADIUS, p.x))
-            p.y = max(PITCH_B + PLAYER_RADIUS, min(PITCH_T - PLAYER_RADIUS, p.y))
+            p.tick(dt)
 
-        # Player–player collisions: positional separation for all pairs
+        # 2. Move the controlled player (blocked while stunned)
+        if not self._controlled.stunned:
+            dx = dy = 0.0
+            if arcade.key.LEFT in self._keys:
+                dx -= 1
+            if arcade.key.RIGHT in self._keys:
+                dx += 1
+            if arcade.key.DOWN in self._keys:
+                dy -= 1
+            if arcade.key.UP in self._keys:
+                dy += 1
+
+            if dx != 0 or dy != 0:
+                norm = math.hypot(dx, dy)
+                self._controlled.x += (dx / norm) * PLAYER_SPEED * dt
+                self._controlled.y += (dy / norm) * PLAYER_SPEED * dt
+                self._controlled.facing = math.atan2(dy, dx)
+
+        # 3. Clamp all players to pitch
+        self._clamp_players()
+
+        # 4. Possession transfer (checked BEFORE separation so overlaps are real)
+        self._update_possession()
+
+        # 5. Player–player positional separation
         self._resolve_player_collisions()
+        self._clamp_players()
 
-        # Re-clamp after separation (a collision near a wall can push out of bounds)
-        for p in self._all_players:
-            p.x = max(PITCH_L + PLAYER_RADIUS, min(PITCH_R - PLAYER_RADIUS, p.x))
-            p.y = max(PITCH_B + PLAYER_RADIUS, min(PITCH_T - PLAYER_RADIUS, p.y))
-
-        # Ball–player collisions: push ball away from any overlapping player
-        for p in self._all_players:
-            contact_dist = PLAYER_RADIUS + BALL_RADIUS
-            dist = math.hypot(self.ball.x - p.x, self.ball.y - p.y)
-            if 0 < dist < contact_dist:
-                angle = math.atan2(self.ball.y - p.y, self.ball.x - p.x)
-                # Separate
-                overlap = contact_dist - dist
-                self.ball.x += math.cos(angle) * overlap
-                self.ball.y += math.sin(angle) * overlap
-                # Impulse is stronger for the player-controlled circle so it
-                # feels responsive; other players give a gentler nudge.
-                power = KICK_IMPULSE if p is self._controlled else KICK_IMPULSE * 0.35
-                self.ball.apply_impulse(
-                    math.cos(angle) * power,
-                    math.sin(angle) * power,
-                )
-
+        # 6. Update ball (tracks possessor or advances with physics)
         self.ball.update(dt)
+
+        # 7. Goal detection
         self._check_goals()
+
+    # ── Helpers ──────────────────────────────────────────────────────────────
+
+    def _handle_shoot(self) -> None:
+        """Launch the ball in the facing direction. Only works when we have the ball."""
+        if self.ball.possessed_by is not self._controlled:
+            return
+        p = self._controlled
+        # Place ball just beyond the player's front edge so it isn't immediately re-absorbed
+        self.ball.possessed_by = None
+        self.ball.x = p.x + math.cos(p.facing) * (PLAYER_RADIUS + BALL_RADIUS + 2)
+        self.ball.y = p.y + math.sin(p.facing) * (PLAYER_RADIUS + BALL_RADIUS + 2)
+        self.ball.vx = math.cos(p.facing) * SHOOT_SPEED
+        self.ball.vy = math.sin(p.facing) * SHOOT_SPEED
+        p.possession_cooldown = SHOT_COOLDOWN
+
+    def _update_possession(self) -> None:
+        possessor = self.ball.possessed_by
+
+        if possessor is not None:
+            # Any non-stunned opposition player whose body overlaps the possessor steals the ball
+            for p in self._all_players:
+                if p.team == possessor.team:
+                    continue
+                if not p.can_gain_possession:
+                    continue
+                dist = math.hypot(p.x - possessor.x, p.y - possessor.y)
+                if dist < PLAYER_RADIUS * 2:
+                    old = possessor
+                    self.ball.possessed_by = p
+                    old.stun_timer = STUN_DURATION
+                    break  # one tackle per frame
+        else:
+            # First eligible player whose body overlaps the ball absorbs it
+            for p in self._all_players:
+                if not p.can_gain_possession:
+                    continue
+                dist = math.hypot(self.ball.x - p.x, self.ball.y - p.y)
+                if dist < PLAYER_RADIUS + BALL_RADIUS:
+                    self.ball.possessed_by = p
+                    self.ball.vx = 0.0
+                    self.ball.vy = 0.0
+                    break
 
     def _resolve_player_collisions(self) -> None:
         players = self._all_players
@@ -376,11 +465,15 @@ class FootballGame(arcade.Window):
                     b.x += math.cos(angle) * push
                     b.y += math.sin(angle) * push
 
+    def _clamp_players(self) -> None:
+        for p in self._all_players:
+            p.x = max(PITCH_L + PLAYER_RADIUS, min(PITCH_R - PLAYER_RADIUS, p.x))
+            p.y = max(PITCH_B + PLAYER_RADIUS, min(PITCH_T - PLAYER_RADIUS, p.y))
+
     def _check_goals(self) -> None:
         goal_lo = PITCH_CY - GOAL_H / 2
         goal_hi = PITCH_CY + GOAL_H / 2
 
-        # Goal when the ball has fully crossed the goal line (not the back of the net)
         if self.ball.x + BALL_RADIUS < PITCH_L and goal_lo <= self.ball.y <= goal_hi:
             self.score_b += 1
             self._trigger_goal_reset()
