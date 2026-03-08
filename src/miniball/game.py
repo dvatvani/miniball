@@ -69,23 +69,6 @@ from miniball.coordinate_transformations import (
 )
 from miniball.team_config import TeamConfig
 
-# ── Default starting positions  (1 GK + 2 defenders + 2 forwards, mirrored) ─────────
-TEAM_A_STARTS: list[tuple[float, float]] = [
-    (PITCH_L + 60, PITCH_CY),
-    (PITCH_L + 230, PITCH_CY - 120),
-    (PITCH_L + 230, PITCH_CY + 120),
-    (PITCH_CX - 180, PITCH_CY - 90),
-    (PITCH_CX - 180, PITCH_CY + 90),
-]
-TEAM_B_STARTS: list[tuple[float, float]] = [
-    (PITCH_R - 60, PITCH_CY),
-    (PITCH_R - 230, PITCH_CY - 120),
-    (PITCH_R - 230, PITCH_CY + 120),
-    (PITCH_CX + 180, PITCH_CY - 90),
-    (PITCH_CX + 180, PITCH_CY + 90),
-]
-
-
 # ── Entities ─────────────────────────────────────────────────────────────────
 
 
