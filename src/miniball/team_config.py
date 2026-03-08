@@ -33,7 +33,7 @@ class TeamConfig:
     ) -> None:
         self.name = name
         self.players = players if players is not None else list(DEFAULT_PLAYERS)
-        formation = {p.name: [p.x, p.y] for p in self.players}
+        formation = {p.number: [p.x, p.y] for p in self.players}
         self.ai = ai(formation=formation)
         self.human_controlled = human_controlled
         assert len(self.players) == 5, "Team must have 5 players"

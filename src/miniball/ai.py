@@ -31,7 +31,7 @@ State schema
     GameState = {
         "players": [
             {
-                "player_id":   str,    # e.g. "A1", "B3"
+                "number":      int,
                 "is_teammate": bool,
                 "has_ball":    bool,
                 "on_cooldown": bool,   # True = cannot gain ball possession
@@ -72,7 +72,7 @@ from miniball.config import STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
 
 
 class PlayerState(TypedDict):
-    player_id: str
+    number: int
     is_teammate: bool
     has_ball: bool
     on_cooldown: bool  # True = cannot gain ball possession (can still move)
@@ -91,18 +91,17 @@ class MatchState(TypedDict):
 
 
 class GameState(TypedDict):
-    players: list[PlayerState]
+    team: list[PlayerState]
+    opposition: list[PlayerState]
     ball: BallState
     match_state: MatchState
 
 
-class PlayerAction(TypedDict):
-    move: list[float]  # [dx, dy] in standard pitch coords; magnitude = speed fraction
+class TeamActions(TypedDict):
+    directions: dict[
+        int, list[float]
+    ]  # map of player numbers to direction vectors [dx, dy] in standard pitch coords; magnitude = speed fraction
     shoot: bool
-
-
-# player_id → PlayerAction
-TeamActions = dict[str, PlayerAction]
 
 
 # ── Abstract base ─────────────────────────────────────────────────────────────
@@ -116,8 +115,8 @@ class BaseAI(ABC):
     used for both teams simultaneously if desired.
     """
 
-    def __init__(self, formation: dict[str, list[float]] | None = None) -> None:
-        self.formation: dict[str, list[float]] = formation or {}
+    def __init__(self, formation: dict[int, list[float]]) -> None:
+        self.formation = formation
 
     @abstractmethod
     def get_actions(self, state: GameState) -> TeamActions:
@@ -135,8 +134,8 @@ class BaseAI(ABC):
         Returns
         -------
         TeamActions
-            Mapping of ``player_id -> PlayerAction``.  Omitted player IDs
-            default to ``{"move": [0, 0], "shoot": False}``.
+            Mapping of ``number -> direction`` and ``shoot``.  Omitted numbers
+            default to ``[0, 0]`` for direction and ``False`` for shoot.
         """
         ...
 
@@ -168,9 +167,8 @@ class StationaryAI(BaseAI):
 
     def get_actions(self, state: GameState) -> TeamActions:
         return {
-            p["player_id"]: {"move": [0.0, 0.0], "shoot": False}
-            for p in state["players"]
-            if p["is_teammate"]
+            "directions": {p["number"]: [0.0, 0.0] for p in state["team"]},
+            "shoot": False,
         }
 
 
@@ -201,39 +199,40 @@ class BaselineAI(BaseAI):
         ball_loc = state["ball"]["location"]
 
         teammate_has_ball = any(
-            p["is_teammate"] and p["has_ball"] for p in state["players"]
+            p["is_teammate"] and p["has_ball"] for p in state["team"]
         )
 
-        actions: TeamActions = {}
+        shoot = False
+        directions = {}
 
-        for p in state["players"]:
-            if not p["is_teammate"]:
-                continue
-
-            pid = p["player_id"]
+        for p in state["team"]:
+            pid = p["number"]
             px, py = p["location"]
 
             if p["has_ball"]:
                 # ── Dribble toward goal; shoot when close enough ───────────
                 dx, dy = self._norm(gx - px, gy - py)
                 dist_to_goal = self._dist([px, py], [gx, gy])
-                actions[pid] = {
-                    "move": [dx, dy],
-                    "shoot": dist_to_goal < self.SHOOT_RANGE,
-                }
+                directions[pid] = [dx, dy]
+                shoot = dist_to_goal < self.SHOOT_RANGE
 
             elif teammate_has_ball:
                 # ── Drift back to home position to open up space ───────────
-                home = self.formation.get(pid, [px, py])
-                if self._dist([px, py], home) > self.HOME_DEADBAND:
-                    dx, dy = self._norm(home[0] - px, home[1] - py)
-                    actions[pid] = {"move": [dx, dy], "shoot": False}
+                formation_location = self.formation.get(pid, [px, py])
+                if self._dist([px, py], formation_location) > self.HOME_DEADBAND:
+                    dx, dy = self._norm(
+                        formation_location[0] - px, formation_location[1] - py
+                    )
+                    directions[pid] = [dx, dy]
                 else:
-                    actions[pid] = {"move": [0.0, 0.0], "shoot": False}
+                    directions[pid] = [0.0, 0.0]
 
             else:
                 # ── Press toward the ball ──────────────────────────────────
                 dx, dy = self._norm(ball_loc[0] - px, ball_loc[1] - py)
-                actions[pid] = {"move": [dx, dy], "shoot": False}
+                directions[pid] = [dx, dy]
 
-        return actions
+        return {
+            "directions": directions,
+            "shoot": shoot,
+        }

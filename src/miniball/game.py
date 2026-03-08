@@ -148,14 +148,12 @@ class Ball:
 class Player:
     def __init__(
         self,
-        player_id: str,
+        number: int,
         x: float,
         y: float,
         color: tuple[int, int, int],
-        number: int,
         is_home: bool,
     ) -> None:
-        self.player_id = player_id
         self.start_x = x
         self.start_y = y
         self.x = x
@@ -260,7 +258,6 @@ class FootballGame(arcade.Window):
             sx, sy = normalized_to_screen(player_config.x / 2, player_config.y)
             self.team_a.append(
                 Player(
-                    player_id=player_config.name,
                     x=sx,
                     y=sy,
                     color=C_TEAM_A,
@@ -275,7 +272,6 @@ class FootballGame(arcade.Window):
             )
             self.team_b.append(
                 Player(
-                    player_id=player_config.name,
                     x=sx,
                     y=sy,
                     color=C_TEAM_B,
@@ -518,15 +514,27 @@ class FootballGame(arcade.Window):
         vel_sy = STANDARD_PITCH_HEIGHT / SCREEN_H
         sign = -1 if flip else 1
 
-        players: list[PlayerState] = [
+        team: list[PlayerState] = [
             {
-                "player_id": p.player_id,
-                "is_teammate": p.is_home == perspective_team_is_home,
+                "number": p.number,
+                "is_teammate": True,
                 "has_ball": self.ball.possessed_by is p,
                 "on_cooldown": p.on_cooldown,
                 "location": pos(p.x, p.y),
             }
             for p in self._all_players
+            if p.is_home == perspective_team_is_home
+        ]
+        opposition: list[PlayerState] = [
+            {
+                "number": p.number,
+                "is_teammate": False,
+                "has_ball": self.ball.possessed_by is p,
+                "on_cooldown": p.on_cooldown,
+                "location": pos(p.x, p.y),
+            }
+            for p in self._all_players
+            if p.is_home != perspective_team_is_home
         ]
 
         team_score = self.score_a if perspective_team_is_home else self.score_b
@@ -538,7 +546,8 @@ class FootballGame(arcade.Window):
         }
 
         return {
-            "players": players,
+            "team": team,
+            "opposition": opposition,
             "ball": {
                 "location": pos(self.ball.x, self.ball.y),
                 "velocity": [
@@ -567,10 +576,10 @@ class FootballGame(arcade.Window):
             Pass ``True`` for Team B.
         """
         for p in players:
-            action = actions.get(p.player_id)
-            if action is None:
+            direction = actions["directions"].get(p.number)
+            if direction is None:
                 continue
-            dx, dy = action["move"]
+            dx, dy = direction
             if flip:
                 dx, dy = -dx, -dy
             if dx != 0 or dy != 0:
@@ -580,7 +589,7 @@ class FootballGame(arcade.Window):
                 p.x += (dx / norm) * PLAYER_SPEED * speed_frac * dt
                 p.y += (dy / norm) * PLAYER_SPEED * speed_frac * dt
                 p.facing = math.atan2(dy, dx)
-            if action["shoot"]:
+            if actions["shoot"]:
                 self._handle_shoot(p)
 
     # ── Helpers ──────────────────────────────────────────────────────────────
