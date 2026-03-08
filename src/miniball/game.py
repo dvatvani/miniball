@@ -153,7 +153,7 @@ class Player:
         y: float,
         color: tuple[int, int, int],
         number: int,
-        team: int,
+        is_home: bool,
     ) -> None:
         self.player_id = player_id
         self.start_x = x
@@ -162,9 +162,9 @@ class Player:
         self.y = y
         self.color = color
         self.number = number
-        self.team = team
+        self.is_home = is_home
         # Face toward the opposing half at kick-off
-        self.facing: float = 0.0 if team == 0 else math.pi
+        self.facing: float = 0.0 if is_home else math.pi
         # Single cooldown timer – blocks ball possession regains only;
         # movement is always permitted.  Set to TACKLE_COOLDOWN after a
         # tackle or SHOT_COOLDOWN after shooting (whichever is larger).
@@ -185,7 +185,7 @@ class Player:
     def reset(self) -> None:
         self.x = self.start_x
         self.y = self.start_y
-        self.facing = 0.0 if self.team == 0 else math.pi
+        self.facing = 0.0 if self.is_home else math.pi
         self.cooldown_timer = 0.0
 
     def draw(self, highlight: bool = False, has_ball: bool = False) -> None:
@@ -265,7 +265,7 @@ class FootballGame(arcade.Window):
                     y=sy,
                     color=C_TEAM_A,
                     number=player_config.number,
-                    team=0,
+                    is_home=True,
                 )
             )
         for player_config in team_b_config.players:
@@ -280,7 +280,7 @@ class FootballGame(arcade.Window):
                     y=sy,
                     color=C_TEAM_B,
                     number=player_config.number,
-                    team=1,
+                    is_home=False,
                 )
             )
 
@@ -360,12 +360,22 @@ class FootballGame(arcade.Window):
         sec_part = int(secs) % 60
         timer_str = f"{mins}:{sec_part:02d}"
         arcade.draw_text(
-            f"Red  {self.score_a} – {self.score_b}  Blue        {timer_str}",
+            f"{self.team_a_config.name}  {self.score_a} – {self.score_b}  {self.team_b_config.name}",
             SCREEN_W / 2,
             SCREEN_H - 32,
             C_HUD,
             font_size=22,
             anchor_x="center",
+            anchor_y="center",
+            bold=True,
+        )
+        arcade.draw_text(
+            f"{timer_str}",
+            SCREEN_W - 20,
+            SCREEN_H - 32,
+            C_HUD,
+            font_size=22,
+            anchor_x="right",
             anchor_y="center",
             bold=True,
         )
@@ -453,17 +463,17 @@ class FootballGame(arcade.Window):
         # 2b. AI move + shoot for non-human players.
         #     Each team's state is normalised to attack right; flip_x converts
         #     the returned move vectors back to screen coordinates.
-        state_a = self._build_game_state("A")
+        home_team_state = self._build_game_state(True)
         self._apply_ai_actions(
             [p for p in self.team_a if p is not self._controlled],
-            self._ai_a.get_actions(state_a),
+            self._ai_a.get_actions(home_team_state),
             dt,
             flip=False,  # Team A attacks right – no rotation needed
         )
-        state_b = self._build_game_state("B")
+        away_team_state = self._build_game_state(False)
         self._apply_ai_actions(
-            self.team_b,
-            self._ai_b.get_actions(state_b),
+            [p for p in self.team_b if p is not self._controlled],
+            self._ai_b.get_actions(away_team_state),
             dt,
             flip=True,  # Team B: 180° rotation back to screen coords
         )
@@ -486,7 +496,7 @@ class FootballGame(arcade.Window):
 
     # ── AI interface ─────────────────────────────────────────────────────────
 
-    def _build_game_state(self, perspective_team: str) -> GameState:
+    def _build_game_state(self, perspective_team_is_home: bool) -> GameState:
         """Snapshot the current game into a normalised AI state dict.
 
         All coordinates are flipped horizontally for Team B so that every AI
@@ -494,7 +504,7 @@ class FootballGame(arcade.Window):
         to ``True`` for players on ``perspective_team``; engine-internal
         fields (``facing``, raw team label, attacking direction) are excluded.
         """
-        flip = perspective_team == "B"
+        flip = not perspective_team_is_home
 
         # screen_to_normalized converts pixel coords → standard pitch coords
         # (0–120 × 0–80) and, when flip=True, also applies the 180° rotation
@@ -511,7 +521,7 @@ class FootballGame(arcade.Window):
         players: list[PlayerState] = [
             {
                 "player_id": p.player_id,
-                "is_teammate": (("A" if p.team == 0 else "B") == perspective_team),
+                "is_teammate": p.is_home == perspective_team_is_home,
                 "has_ball": self.ball.possessed_by is p,
                 "on_cooldown": p.on_cooldown,
                 "location": pos(p.x, p.y),
@@ -519,8 +529,8 @@ class FootballGame(arcade.Window):
             for p in self._all_players
         ]
 
-        team_score = self.score_a if perspective_team == "A" else self.score_b
-        oppo_score = self.score_b if perspective_team == "A" else self.score_a
+        team_score = self.score_a if perspective_team_is_home else self.score_b
+        oppo_score = self.score_b if perspective_team_is_home else self.score_a
         match_state: MatchState = {
             "team_current_score": team_score,
             "opposition_current_score": oppo_score,
@@ -637,7 +647,7 @@ class FootballGame(arcade.Window):
         if possessor is not None:
             # Any non-stunned opposition player whose body overlaps the possessor steals the ball
             for p in self._all_players:
-                if p.team == possessor.team:
+                if p.is_home == possessor.is_home:
                     continue
                 if not p.can_gain_possession:
                     continue
@@ -704,8 +714,8 @@ def main() -> None:
     from miniball.ai import StationaryAI
 
     game = FootballGame(
-        team_a_config=TeamConfig(name="Team A", human_controlled=1),
-        team_b_config=TeamConfig(name="Team B", ai=StationaryAI),
+        team_a_config=TeamConfig(name="Bayesians", human_controlled=1),
+        team_b_config=TeamConfig(name="Frequentists", ai=StationaryAI),
     )
     game.run()
 
