@@ -720,11 +720,11 @@ class FootballGame(arcade.Window):
 
 
 def main() -> None:
-    from miniball.ai import StationaryAI
+    from miniball.ai import BaselineAI
 
     game = FootballGame(
-        team_a_config=TeamConfig(name="Bayesians", human_controlled=1),
-        team_b_config=TeamConfig(name="Frequentists", ai=StationaryAI),
+        team_a_config=TeamConfig(name="Bayesians", ai=BaselineAI, human_controlled=1),
+        team_b_config=TeamConfig(name="Frequentists", ai=BaselineAI),
     )
     game.run()
 
