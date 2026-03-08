@@ -246,6 +246,7 @@ class FootballGame(arcade.Window):
         self._game_over = False
         self._keys: set[int] = set()
         self._goal_flash = 0.0
+        self._countdown: float = 3.0  # freeze before kick-off / after each goal
 
         # Gamepad – use the first connected controller if one is present
         joysticks = arcade.get_joysticks()
@@ -376,7 +377,7 @@ class FootballGame(arcade.Window):
             bold=True,
         )
         arcade.draw_text(
-            "Arrows / L-stick · Space / A to shoot · You are Red #4 (yellow ring)",
+            "Arrows / L-stick to move and aim shot · Space / A to shoot",
             SCREEN_W / 2,
             28,
             C_HINT,
@@ -406,6 +407,17 @@ class FootballGame(arcade.Window):
                 anchor_y="center",
                 bold=True,
             )
+        elif self._countdown > 0:
+            arcade.draw_text(
+                str(math.ceil(self._countdown)),
+                SCREEN_W / 2,
+                SCREEN_H / 2,
+                (255, 220, 0),
+                font_size=120,
+                anchor_x="center",
+                anchor_y="center",
+                bold=True,
+            )
 
     # ── Input ─────────────────────────────────────────────────────────────────
 
@@ -427,6 +439,13 @@ class FootballGame(arcade.Window):
 
         if self._goal_flash > 0:
             self._goal_flash -= dt
+            if self._goal_flash <= 0:
+                self._goal_flash = 0.0
+                self._countdown = 3.0
+            return
+
+        if self._countdown > 0:
+            self._countdown = max(0.0, self._countdown - dt)
             return
 
         self._time_remaining -= dt
@@ -723,8 +742,10 @@ def main() -> None:
     from miniball.ai import BaselineAI
 
     game = FootballGame(
-        team_a_config=TeamConfig(name="Bayesians", ai=BaselineAI, human_controlled=1),
-        team_b_config=TeamConfig(name="Frequentists", ai=BaselineAI),
+        team_a_config=TeamConfig(
+            name="Baseline model", ai=BaselineAI, human_controlled=None
+        ),
+        team_b_config=TeamConfig(name="Baseline model 2", ai=BaselineAI),
     )
     game.run()
 
