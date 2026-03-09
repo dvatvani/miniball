@@ -34,7 +34,7 @@ State schema
                 "number":      int,
                 "is_teammate": bool,
                 "has_ball":    bool,
-                "on_cooldown": bool,   # True = cannot gain ball possession
+                "cooldown_timer": float, # seconds remaining on cooldown (0 = can receive ball)
                 "location":    [x, y], # standard pitch coords
             },
             ...
@@ -46,7 +46,7 @@ State schema
         "match_state": {
             "team_current_score":        int,
             "opposition_current_score":  int,
-            "seconds_left":              float,
+            "match_time_seconds":        float,  # elapsed since kick-off
         }
     }
 
@@ -75,7 +75,7 @@ class PlayerState(TypedDict):
     number: int
     is_teammate: bool
     has_ball: bool
-    on_cooldown: bool  # True = cannot gain ball possession (can still move)
+    cooldown_timer: float  # seconds remaining on cooldown; 0 = can receive ball
     location: list[float]  # standard pitch coords [x, y]
 
 
@@ -87,7 +87,7 @@ class BallState(TypedDict):
 class MatchState(TypedDict):
     team_current_score: int
     opposition_current_score: int
-    seconds_left: float
+    match_time_seconds: float  # elapsed since kick-off
 
 
 class GameState(TypedDict):

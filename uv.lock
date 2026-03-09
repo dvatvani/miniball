@@ -809,6 +809,7 @@ source = { editable = "." }
 dependencies = [
     { name = "arcade" },
     { name = "marimo" },
+    { name = "polars" },
     { name = "pydantic-ai-slim" },
     { name = "scipy" },
     { name = "shapely" },
@@ -837,6 +838,7 @@ dev = [
 requires-dist = [
     { name = "arcade", specifier = ">=3.3.3" },
     { name = "marimo", specifier = ">=0.19.9" },
+    { name = "polars", specifier = ">=1.0.0" },
     { name = "pydantic-ai-slim", specifier = ">=1.67.0" },
     { name = "scipy", specifier = ">=1.15.0" },
     { name = "shapely", specifier = ">=2.1.2" },

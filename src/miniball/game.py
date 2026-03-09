@@ -23,6 +23,8 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 
 import arcade
 
@@ -513,6 +515,7 @@ class FootballGame(arcade.Window):
             self._time_remaining = 0.0
             self._game_over = True
             self.ball.possessed_by = None
+            self._export_history()
             return
 
         # 1. Tick all player timers
@@ -654,7 +657,7 @@ class FootballGame(arcade.Window):
                 "number": p.number,
                 "is_teammate": True,
                 "has_ball": self.ball.possessed_by is p,
-                "on_cooldown": p.on_cooldown,
+                "cooldown_timer": p.cooldown_timer,
                 "location": pos(p.x, p.y),
             }
             for p in self._all_players
@@ -665,7 +668,7 @@ class FootballGame(arcade.Window):
                 "number": p.number,
                 "is_teammate": False,
                 "has_ball": self.ball.possessed_by is p,
-                "on_cooldown": p.on_cooldown,
+                "cooldown_timer": p.cooldown_timer,
                 "location": pos(p.x, p.y),
             }
             for p in self._all_players
@@ -677,7 +680,7 @@ class FootballGame(arcade.Window):
         match_state: MatchState = {
             "team_current_score": team_score,
             "opposition_current_score": oppo_score,
-            "seconds_left": self._time_remaining,
+            "match_time_seconds": GAME_DURATION - self._time_remaining,
         }
 
         return {
@@ -925,19 +928,142 @@ class FootballGame(arcade.Window):
         # Sync ball position immediately (ball.update won't run during countdown)
         self.ball.update(0)
 
+    # ── Analytics export ──────────────────────────────────────────────────────
+
+    def _export_history(self) -> None:
+        """Flatten _history into a Polars DataFrame and write to parquet.
+
+        Each row represents one player at one frame.
+
+        Coordinate conventions
+        ──────────────────────
+        ``pos_x`` / ``pos_y`` / ``action_dx`` / ``action_dy`` are in the
+        team's own normalised frame (the team always attacks right, x ∈ [0,
+        120], y ∈ [0, 80]).  The ``_global`` variants are in the shared pitch
+        frame where team A always attacks right; for team A these are identical,
+        while for team B they are the 180° rotation (W - x, H - y).
+        """
+        import polars as pl
+
+        if not self._history:
+            return
+
+        name_a = self.team_a_config.name
+        name_b = self.team_b_config.name
+        W = STANDARD_PITCH_WIDTH
+        H = STANDARD_PITCH_HEIGHT
+
+        rows: list[dict[str, object]] = []
+        for frame_number, record in enumerate(self._history):
+            # Ball state is stored in the global (team A) frame.
+            gbx, gby = record.state["ball"]["location"]
+            gbvx, gbvy = record.state["ball"]["velocity"]
+            score_a = record.state["match_state"]["team_current_score"]
+            score_b = record.state["match_state"]["opposition_current_score"]
+            match_time = record.state["match_state"]["match_time_seconds"]
+            t = record.game_time
+
+            for player in record.state["team"]:  # team A – own frame = global
+                num = player["number"]
+                gx, gy = player["location"]
+                dx, dy = record.actions_team_a["directions"].get(num, [0.0, 0.0])
+                rows.append(
+                    {
+                        "frame_number": frame_number,
+                        "game_time": t,
+                        "match_time_seconds": match_time,
+                        "team": name_a,
+                        "is_home": True,
+                        "player_number": num,
+                        "pos_x": gx,
+                        "pos_y": gy,
+                        "pos_x_global": gx,
+                        "pos_y_global": gy,
+                        "has_ball": player["has_ball"],
+                        "cooldown_timer": player["cooldown_timer"],
+                        "action_dx": dx,
+                        "action_dy": dy,
+                        "action_dx_global": dx,
+                        "action_dy_global": dy,
+                        "shoot": record.actions_team_a["shoot"],
+                        "ball_x": gbx,
+                        "ball_y": gby,
+                        "ball_x_global": gbx,
+                        "ball_y_global": gby,
+                        "ball_vx": gbvx,
+                        "ball_vy": gbvy,
+                        "ball_vx_global": gbvx,
+                        "ball_vy_global": gbvy,
+                        "team_score": score_a,
+                        "opposition_score": score_b,
+                    }
+                )
+
+            for player in record.state["opposition"]:  # team B
+                num = player["number"]
+                # state["opposition"] positions are in global (team A) frame;
+                # flip them to obtain team B's own attack-right frame.
+                gx, gy = player["location"]
+                bx, by = W - gx, H - gy
+                # actions_team_b directions are already in team B's own frame;
+                # negate to obtain the global equivalents.
+                dx_b, dy_b = record.actions_team_b["directions"].get(num, [0.0, 0.0])
+                rows.append(
+                    {
+                        "frame_number": frame_number,
+                        "game_time": t,
+                        "match_time_seconds": match_time,
+                        "team": name_b,
+                        "is_home": False,
+                        "player_number": num,
+                        "pos_x": bx,
+                        "pos_y": by,
+                        "pos_x_global": gx,
+                        "pos_y_global": gy,
+                        "has_ball": player["has_ball"],
+                        "cooldown_timer": player["cooldown_timer"],
+                        "action_dx": dx_b,
+                        "action_dy": dy_b,
+                        "action_dx_global": -dx_b,
+                        "action_dy_global": -dy_b,
+                        "shoot": record.actions_team_b["shoot"],
+                        "ball_x": W - gbx,
+                        "ball_y": H - gby,
+                        "ball_x_global": gbx,
+                        "ball_y_global": gby,
+                        "ball_vx": -gbvx,
+                        "ball_vy": -gbvy,
+                        "ball_vx_global": gbvx,
+                        "ball_vy_global": gbvy,
+                        "team_score": score_b,
+                        "opposition_score": score_a,
+                    }
+                )
+
+        df = pl.DataFrame(rows)
+
+        out_dir = Path("match_data")
+        out_dir.mkdir(exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = out_dir / f"match_{timestamp}.parquet"
+        df.write_parquet(path)
+        print(
+            f"Match data saved → {path}  ({len(self._history)} frames · {len(df)} rows)"
+        )
+
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 
 def main() -> None:
-    from miniball.ai import StationaryAI
+    from miniball.ai import BaselineAI
 
     game = FootballGame(
         team_a_config=TeamConfig(
-            name="Baseline model", ai=StationaryAI, human_controlled=True
+            name="Baseline model", ai=BaselineAI, human_controlled=False
         ),
         team_b_config=TeamConfig(
-            name="Baseline model 2", ai=StationaryAI, human_controlled=False
+            name="Baseline model 2", ai=BaselineAI, human_controlled=False
         ),
     )
     game.run()
