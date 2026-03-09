@@ -105,6 +105,7 @@ class FrameRecord:
     state: GameState  # global reference frame (team A perspective)
     actions_team_a: TeamActions  # normalised; team A attacks right
     actions_team_b: TeamActions  # normalised; team B's own frame (also attacks right)
+    human_player: tuple[bool, int] | None  # (is_home, player_number) or None
 
 
 # ── Entities ─────────────────────────────────────────────────────────────────
@@ -556,12 +557,18 @@ class FootballGame(arcade.Window):
         )
 
         # 4. Record this frame for post-game analytics.
+        controlled = self._controlled
         self._history.append(
             FrameRecord(
                 game_time=GAME_DURATION - self._time_remaining,
                 state=home_team_state,
                 actions_team_a=effective_a,
                 actions_team_b=effective_b,
+                human_player=(
+                    (controlled.is_home, controlled.number)
+                    if controlled is not None
+                    else None
+                ),
             )
         )
 
@@ -959,6 +966,7 @@ class FootballGame(arcade.Window):
             t = record.game_time
 
             _null_action: PlayerAction = {"direction": [0.0, 0.0], "shoot": False}
+            hp = record.human_player  # (is_home, number) or None
 
             for player in record.state["team"]:  # team A – own frame = global
                 num = player["number"]
@@ -973,6 +981,9 @@ class FootballGame(arcade.Window):
                         "team": name_a,
                         "is_home": True,
                         "player_number": num,
+                        "is_human_controlled": hp is not None
+                        and hp[0] is True
+                        and hp[1] == num,
                         "pos_x": gx,
                         "pos_y": gy,
                         "pos_x_global": gx,
@@ -1014,6 +1025,9 @@ class FootballGame(arcade.Window):
                         "team": name_b,
                         "is_home": False,
                         "player_number": num,
+                        "is_human_controlled": hp is not None
+                        and hp[0] is False
+                        and hp[1] == num,
                         "pos_x": bx,
                         "pos_y": by,
                         "pos_x_global": gx,
