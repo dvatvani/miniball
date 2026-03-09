@@ -31,19 +31,6 @@ def _():
 
 @app.cell
 def _():
-    from miniball.example import hello
-
-    return (hello,)
-
-
-@app.cell
-def _(hello):
-    hello("Playground")
-    return
-
-
-@app.cell
-def _():
     import duckdb
     import random
     import polars as pl
