@@ -121,6 +121,15 @@ def _(match_data, mo):
 
 
 @app.cell
+def _(frame_selector, match_data, pl):
+    _frame_df = match_data.filter(
+        pl.col("frame_number") == frame_selector.value
+    ).to_pandas()
+    _frame_df
+    return
+
+
+@app.cell
 def _(color_map, frame_selector, match_data, pl, plt):
     _frame_df = match_data.filter(
         pl.col("frame_number") == frame_selector.value

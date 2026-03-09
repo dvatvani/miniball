@@ -31,8 +31,9 @@ class BallChasersAI(BaseAI):
             p["is_teammate"] and p["has_ball"] for p in state["team"]
         )
 
+        directions: dict[int, list[float]] = {}
+        ball_carrier_pid: int | None = None
         shoot = False
-        directions = {}
 
         for p in state["team"]:
             pid = p["number"]
@@ -43,6 +44,7 @@ class BallChasersAI(BaseAI):
                 dx, dy = self._norm(gx - px, gy - py)
                 dist_to_goal = self._dist([px, py], [gx, gy])
                 directions[pid] = [dx, dy]
+                ball_carrier_pid = pid
                 shoot = dist_to_goal < self.SHOOT_RANGE
 
             elif teammate_has_ball:
@@ -62,6 +64,11 @@ class BallChasersAI(BaseAI):
                 directions[pid] = [dx, dy]
 
         return {
-            "directions": directions,
-            "shoot": shoot,
+            "actions": {
+                pid: {
+                    "direction": direction,
+                    "shoot": shoot and pid == ball_carrier_pid,
+                }
+                for pid, direction in directions.items()
+            }
         }

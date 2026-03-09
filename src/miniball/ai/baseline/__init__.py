@@ -60,7 +60,16 @@ class BaselineAI(BaseAI):
         else:
             directions = self._out_of_possession_actions(teammates, opponents, ball_loc)
 
-        return {"directions": directions, "shoot": shoot}
+        carrier_num = ball_carrier["number"] if ball_carrier is not None else None
+        return {
+            "actions": {
+                pid: {
+                    "direction": direction,
+                    "shoot": shoot and pid == carrier_num,
+                }
+                for pid, direction in directions.items()
+            }
+        }
 
     # ── In-possession helpers ─────────────────────────────────────────────────
 

@@ -9,6 +9,8 @@ class StationaryAI(BaseAI):
 
     def get_actions(self, state: GameState) -> TeamActions:
         return {
-            "directions": {p["number"]: [0.0, 0.0] for p in state["team"]},
-            "shoot": False,
+            "actions": {
+                p["number"]: {"direction": [0.0, 0.0], "shoot": False}
+                for p in state["team"]
+            }
         }

@@ -53,10 +53,17 @@ State schema
 Action schema
 ─────────────
     PlayerAction = {
-        "move":  [dx, dy],  # desired direction in standard pitch coords;
-                            # magnitude used as speed fraction (0–1),
-                            # clipped to 1 if larger
-        "shoot": bool,      # request to shoot; ignored if player has no ball
+        "direction": [dx, dy],  # desired direction in standard pitch coords;
+                                # magnitude used as speed fraction (0–1),
+                                # clipped to 1 if larger
+        "shoot":     bool,      # request to shoot; ignored if player has no ball
+    }
+
+    TeamActions = {
+        "actions": {
+            player_number: PlayerAction,  # one entry per player; omitted players stand still
+            ...
+        }
     }
 """
 
@@ -97,11 +104,17 @@ class GameState(TypedDict):
     match_state: MatchState
 
 
+class PlayerAction(TypedDict):
+    direction: list[
+        float
+    ]  # [dx, dy] in standard pitch coords; magnitude = speed fraction (0–1)
+    shoot: bool  # request to shoot; only meaningful for the player who has the ball
+
+
 class TeamActions(TypedDict):
-    directions: dict[
-        int, list[float]
-    ]  # map of player numbers to direction vectors [dx, dy] in standard pitch coords; magnitude = speed fraction
-    shoot: bool
+    actions: dict[
+        int, PlayerAction
+    ]  # player number → per-player action; omitted players stand still
 
 
 # ── Abstract base ─────────────────────────────────────────────────────────────
@@ -134,8 +147,8 @@ class BaseAI(ABC):
         Returns
         -------
         TeamActions
-            Mapping of ``number -> direction`` and ``shoot``.  Omitted numbers
-            default to ``[0, 0]`` for direction and ``False`` for shoot.
+            Per-player actions keyed by player number.  Omitted players stand
+            still and do not shoot.
         """
         ...
 

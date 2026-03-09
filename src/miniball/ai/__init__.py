@@ -5,6 +5,7 @@ from miniball.ai.helpers import (
     BaseAI,
     GameState,
     MatchState,
+    PlayerAction,
     PlayerState,
     TeamActions,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "BaseAI",
     "GameState",
     "TeamActions",
+    "PlayerAction",
     "PlayerState",
     "BallState",
     "MatchState",

@@ -28,7 +28,14 @@ from pathlib import Path
 
 import arcade
 
-from miniball.ai import BaseAI, GameState, MatchState, PlayerState, TeamActions
+from miniball.ai import (
+    BaseAI,
+    GameState,
+    MatchState,
+    PlayerAction,
+    PlayerState,
+    TeamActions,
+)
 from miniball.config import (
     BALL_DRAG,
     BALL_RADIUS,
@@ -622,10 +629,13 @@ class FootballGame(arcade.Window):
         # For team B this is negated to reach their attack-right team frame.
         dx, dy = self._get_move_input()
         dx, dy = global_delta_to_team(dx, dy, is_home=is_home_team)
-        actions["directions"][controlled.number] = [dx, dy]
 
-        if self._human_shoot_requested:
-            actions["shoot"] = True
+        # Human fully overrides the AI's action for their player: direction comes
+        # from the controller, and shoot is gated solely on the button press.
+        actions["actions"][controlled.number] = {
+            "direction": [dx, dy],
+            "shoot": self._human_shoot_requested,
+        }
 
         return actions
 
@@ -702,10 +712,10 @@ class FootballGame(arcade.Window):
             convert from the AI's attack-right team frame back to screen space.
         """
         for p in players:
-            direction = actions["directions"].get(p.number)
-            if direction is None:
+            player_action = actions["actions"].get(p.number)
+            if player_action is None:
                 continue
-            dx, dy = direction
+            dx, dy = player_action["direction"]
             dx, dy = team_delta_to_global(dx, dy, is_home=is_home)
             if dx != 0 or dy != 0:
                 norm = math.hypot(dx, dy)
@@ -714,7 +724,7 @@ class FootballGame(arcade.Window):
                 p.x += (dx / norm) * PLAYER_SPEED * speed_frac * dt
                 p.y += (dy / norm) * PLAYER_SPEED * speed_frac * dt
                 p.facing = math.atan2(dy, dx)
-            if actions["shoot"]:
+            if player_action["shoot"]:
                 self._handle_shoot(p)
 
     # ── Helpers ──────────────────────────────────────────────────────────────
@@ -948,10 +958,13 @@ class FootballGame(arcade.Window):
             match_time = record.state["match_state"]["match_time_seconds"]
             t = record.game_time
 
+            _null_action: PlayerAction = {"direction": [0.0, 0.0], "shoot": False}
+
             for player in record.state["team"]:  # team A – own frame = global
                 num = player["number"]
                 gx, gy = player["location"]
-                dx, dy = record.actions_team_a["directions"].get(num, [0.0, 0.0])
+                pa_a = record.actions_team_a["actions"].get(num, _null_action)
+                dx, dy = pa_a["direction"]
                 rows.append(
                     {
                         "frame_number": frame_number,
@@ -970,7 +983,7 @@ class FootballGame(arcade.Window):
                         "action_dy": dy,
                         "action_dx_global": dx,
                         "action_dy_global": dy,
-                        "shoot": record.actions_team_a["shoot"],
+                        "shoot": pa_a["shoot"],
                         "ball_x": gbx,
                         "ball_y": gby,
                         "ball_x_global": gbx,
@@ -988,7 +1001,8 @@ class FootballGame(arcade.Window):
                 num = player["number"]
                 gx, gy = player["location"]
                 bx, by = global_to_team(gx, gy, is_home=False)
-                dx_b, dy_b = record.actions_team_b["directions"].get(num, [0.0, 0.0])
+                pa_b = record.actions_team_b["actions"].get(num, _null_action)
+                dx_b, dy_b = pa_b["direction"]
                 adx_g, ady_g = team_delta_to_global(dx_b, dy_b, is_home=False)
                 bbx, bby = global_to_team(gbx, gby, is_home=False)
                 bbvx, bbvy = global_delta_to_team(gbvx, gbvy, is_home=False)
@@ -1010,7 +1024,7 @@ class FootballGame(arcade.Window):
                         "action_dy": dy_b,
                         "action_dx_global": adx_g,
                         "action_dy_global": ady_g,
-                        "shoot": record.actions_team_b["shoot"],
+                        "shoot": pa_b["shoot"],
                         "ball_x": bbx,
                         "ball_y": bby,
                         "ball_x_global": gbx,
