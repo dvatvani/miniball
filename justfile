@@ -6,6 +6,9 @@ set shell := ["bash", "-euc"]
 default:
   @just --list
 
+play:
+  uv run python -m miniball.main
+
 # Synchronize dependencies from lockfile
 sync:
     uv sync
