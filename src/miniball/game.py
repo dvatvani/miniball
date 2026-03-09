@@ -21,6 +21,7 @@ Possession model
 from __future__ import annotations
 
 import math
+import random
 
 import arcade
 
@@ -283,6 +284,9 @@ class FootballGame(arcade.Window):
 
         self._ai_a: BaseAI = team_a_config.ai
         self._ai_b: BaseAI = team_b_config.ai
+
+        # Home team (attacks left→right) always takes the opening kick-off
+        self._assign_kickoff_possession(self.team_a)
 
     @property
     def _controlled(self) -> Player | None:
@@ -723,16 +727,33 @@ class FootballGame(arcade.Window):
 
         if self.ball.x + BALL_RADIUS < PITCH_L and goal_lo <= self.ball.y <= goal_hi:
             self.score_b += 1
-            self._trigger_goal_reset()
+            self._trigger_goal_reset(conceding_team=self.team_a)
         elif self.ball.x - BALL_RADIUS > PITCH_R and goal_lo <= self.ball.y <= goal_hi:
             self.score_a += 1
-            self._trigger_goal_reset()
+            self._trigger_goal_reset(conceding_team=self.team_b)
 
-    def _trigger_goal_reset(self) -> None:
+    def _trigger_goal_reset(self, conceding_team: list[Player]) -> None:
         self._goal_flash = 1.5
         self.ball.reset()
         for p in self._all_players:
             p.reset()
+        self._assign_kickoff_possession(conceding_team)
+
+    def _assign_kickoff_possession(self, team: list[Player]) -> None:
+        """Give the ball to the furthest-forward player in *team* at kick-off.
+
+        Home team attacks right (high x = forward); away team attacks left
+        (low x = forward).  Ties are broken at random.
+        """
+        if team[0].is_home:
+            forward_x = max(p.start_x for p in team)
+        else:
+            forward_x = min(p.start_x for p in team)
+        candidates = [p for p in team if p.start_x == forward_x]
+        chosen = random.choice(candidates)
+        self.ball.possessed_by = chosen
+        # Sync ball position immediately (ball.update won't run during countdown)
+        self.ball.update(0)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
