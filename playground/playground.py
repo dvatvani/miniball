@@ -19,17 +19,23 @@ def _():
 
 @app.cell
 def _():
+    from miniball.coordinate_transformations import team_to_global
+
+    def away(tx: float, ty: float) -> dict[str, float]:
+        gx, gy = team_to_global(tx, ty, is_home=False)
+        return {"x": gx, "y": gy}
+
     players = [
         dict(name="GK", number=1, x=10, y=40, is_home=True),
         dict(name="Defender 1", number=2, x=50, y=60, is_home=True),
         dict(name="Defender 2", number=3, x=50, y=20, is_home=True),
         dict(name="Forward 1", number=4, x=100, y=50, is_home=True),
         dict(name="Forward 2", number=5, x=100, y=30, is_home=True),
-        dict(name="GK", number=1, x=120 - 10, y=80 - 40, is_home=False),
-        dict(name="Defender 1", number=2, x=120 - 50, y=80 - 60, is_home=False),
-        dict(name="Defender 2", number=3, x=120 - 50, y=80 - 20, is_home=False),
-        dict(name="Forward 1", number=4, x=120 - 100, y=80 - 50, is_home=False),
-        dict(name="Forward 2", number=5, x=120 - 100, y=80 - 30, is_home=False),
+        dict(name="GK", number=1, **away(10, 40), is_home=False),
+        dict(name="Defender 1", number=2, **away(50, 60), is_home=False),
+        dict(name="Defender 2", number=3, **away(50, 20), is_home=False),
+        dict(name="Forward 1", number=4, **away(100, 50), is_home=False),
+        dict(name="Forward 2", number=5, **away(100, 30), is_home=False),
     ]
     return (players,)
 

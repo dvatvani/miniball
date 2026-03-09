@@ -192,94 +192,37 @@ def _(color_map, frame_selector, match_data, pl, plt):
         zorder=5,
     )
 
+    # draw movement arrow if action deltas are present and non-zero
+    try:
+        _dx = float(_frame_df["ball_vx_global"].iloc[0])
+        _dy = float(_frame_df["ball_vy_global"].iloc[0])
+    except Exception:
+        _dx = 0.0
+        _dy = 0.0
+
+    # filter out NaN (NaN != NaN) and zero-length vectors
+    if not (_dx != _dx or _dy != _dy) and not (_dx == 0.0 and _dy == 0.0):
+        print("test")
+        _ax_frame.arrow(
+            _frame_df.iloc[0]["ball_x_global"],
+            _frame_df.iloc[0]["ball_y_global"],
+            _dx,
+            _dy,
+            head_width=0.9,
+            head_length=1.0,
+            length_includes_head=True,
+            color="k",
+            alpha=0.8,
+            linewidth=1,
+            zorder=6,
+        )
+
     _time = _frame_df["match_time_seconds"].iloc[0]
     _ax_frame.set_title(f"Frame {frame_selector.value} — time {_time:.2f}s")
     _ax_frame.legend(title="Team", loc="upper right", bbox_to_anchor=(1.15, 1))
 
     _ax_frame.grid(True, alpha=0.3)
     plt.gca()
-    return
-
-
-@app.cell
-def _(color_map, frame_selector, match_data, pl, plt):
-    _frame_df = match_data.filter(
-        pl.col("frame_number") == frame_selector.value
-    ).to_pandas()
-    _fig_frame, _axs = plt.subplots(1, 2, figsize=(16, 6))
-
-    for _team_i, _team in enumerate(_frame_df["team"].unique()):
-        _ax_frame = _axs[_team_i]
-        _ax_frame.set_xlim(0, 120)
-        _ax_frame.set_ylim(0, 80)
-        _ax_frame.set_xlabel("Standardised X")
-        _ax_frame.set_ylabel("Standardised Y")
-        _sub = _frame_df[_frame_df["team"] == _team]
-        _ax_frame.scatter(
-            _sub["pos_x"],
-            _sub["pos_y"],
-            s=120,
-            facecolor="w",
-            edgecolor=color_map.get(_team, plt.cm.tab10(0)),
-            alpha=0.9,
-            label=_team,
-            linewidths=0.5,
-        )
-        for _, _row in _sub.iterrows():
-            _ax_frame.annotate(
-                int(_row["player_number"]),
-                (_row["pos_x"], _row["pos_y"]),
-                textcoords="offset points",
-                xytext=(4, 4),
-                fontsize=8,
-                weight="bold",
-                color="black",
-            )
-
-            # draw movement arrow if action deltas are present and non-zero
-            try:
-                _dx = float(_row["action_dx"])
-                _dy = float(_row["action_dy"])
-            except Exception:
-                _dx = 0.0
-                _dy = 0.0
-
-            # filter out NaN (NaN != NaN) and zero-length vectors
-            if not (_dx != _dx or _dy != _dy) and not (_dx == 0.0 and _dy == 0.0):
-                _ax_frame.arrow(
-                    _row["pos_x"],
-                    _row["pos_y"],
-                    _dx,
-                    _dy,
-                    head_width=0.9,
-                    head_length=1.0,
-                    length_includes_head=True,
-                    color=color_map.get(_team, plt.cm.tab10(0)),
-                    alpha=0.8,
-                    linewidth=1,
-                    zorder=6,
-                )
-
-        # Plot ball (use first row's ball position for the frame)
-        _ball_x = _sub["ball_x"].iloc[0]
-        _ball_y = _sub["ball_y"].iloc[0]
-        _ax_frame.scatter(
-            _ball_x,
-            _ball_y,
-            s=220,
-            color="gold",
-            edgecolors="k",
-            marker="*",
-            label="ball",
-            zorder=5,
-        )
-
-        _time = _frame_df["match_time_seconds"].iloc[0]
-        _ax_frame.set_title(f"Frame {frame_selector.value} — time {_time:.2f}s")
-        _ax_frame.legend(title="Team", loc="upper right", bbox_to_anchor=(1.15, 1))
-
-        _ax_frame.grid(True, alpha=0.3)
-    _fig_frame
     return
 
 

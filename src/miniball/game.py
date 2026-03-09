@@ -63,14 +63,16 @@ from miniball.config import (
     SCREEN_W,
     SHOOT_SPEED,
     SHOT_COOLDOWN,
-    STANDARD_PITCH_HEIGHT,
-    STANDARD_PITCH_WIDTH,
     TACKLE_COOLDOWN,
     TITLE,
 )
 from miniball.coordinate_transformations import (
-    normalized_to_screen,
-    screen_to_normalized,
+    global_delta_to_team,
+    global_to_team,
+    screen_delta_to_team,
+    screen_to_team,
+    team_delta_to_global,
+    team_to_screen,
 )
 from miniball.team_config import TeamConfig
 
@@ -304,7 +306,7 @@ class FootballGame(arcade.Window):
         self._history: list[FrameRecord] = []
 
         for player_config in team_a_config.players:
-            sx, sy = normalized_to_screen(player_config.x / 2, player_config.y)
+            sx, sy = team_to_screen(player_config.x / 2, player_config.y, is_home=True)
             self.team_a.append(
                 Player(
                     x=sx,
@@ -315,10 +317,8 @@ class FootballGame(arcade.Window):
                 )
             )
         for player_config in team_b_config.players:
-            # Team B attacks left, so their normalised positions are 180°-rotated
-            sx, sy = normalized_to_screen(
-                player_config.x / 2, player_config.y, flip=True
-            )
+            # Team B attacks left, so their normalised positions are 180°-rotated.
+            sx, sy = team_to_screen(player_config.x / 2, player_config.y, is_home=False)
             self.team_b.append(
                 Player(
                     x=sx,
@@ -560,8 +560,8 @@ class FootballGame(arcade.Window):
 
         # 5. Apply effective actions to all players; team B vectors are flipped
         #    from normalised back to screen coordinates inside _apply_ai_actions.
-        self._apply_ai_actions(self.team_a, effective_a, dt, flip=False)
-        self._apply_ai_actions(self.team_b, effective_b, dt, flip=True)
+        self._apply_ai_actions(self.team_a, effective_a, dt, is_home=True)
+        self._apply_ai_actions(self.team_b, effective_b, dt, is_home=False)
 
         # Consume the single-frame shoot flag now that both teams have seen it.
         self._human_shoot_requested = False
@@ -618,11 +618,10 @@ class FootballGame(arcade.Window):
         if controlled is None:
             return actions
 
-        # Human direction: keyboard/gamepad input is in screen space.
-        # For team B (attacks left on screen) negate to reach normalised frame.
+        # Human direction: keyboard/gamepad input is in screen space (right = +x).
+        # For team B this is negated to reach their attack-right team frame.
         dx, dy = self._get_move_input()
-        if not is_home_team:
-            dx, dy = -dx, -dy
+        dx, dy = global_delta_to_team(dx, dy, is_home=is_home_team)
         actions["directions"][controlled.number] = [dx, dy]
 
         if self._human_shoot_requested:
@@ -638,19 +637,10 @@ class FootballGame(arcade.Window):
         to ``True`` for players on ``perspective_team``; engine-internal
         fields (``facing``, raw team label, attacking direction) are excluded.
         """
-        flip = not perspective_team_is_home
+        is_home = perspective_team_is_home
 
-        # screen_to_normalized converts pixel coords → standard pitch coords
-        # (0–120 × 0–80) and, when flip=True, also applies the 180° rotation
-        # that ensures both teams always see themselves attacking right.
         def pos(x: float, y: float) -> list[float]:
-            nx, ny = screen_to_normalized(x, y, flip=flip)
-            return [nx, ny]
-
-        # Velocities have no positional offset: just scale and optionally negate.
-        vel_sx = STANDARD_PITCH_WIDTH / SCREEN_W
-        vel_sy = STANDARD_PITCH_HEIGHT / SCREEN_H
-        sign = -1 if flip else 1
+            return list(screen_to_team(x, y, is_home=is_home))
 
         team: list[PlayerState] = [
             {
@@ -688,10 +678,9 @@ class FootballGame(arcade.Window):
             "opposition": opposition,
             "ball": {
                 "location": pos(self.ball.x, self.ball.y),
-                "velocity": [
-                    self.ball.vx * vel_sx * sign,
-                    self.ball.vy * vel_sy * sign,
-                ],
+                "velocity": list(
+                    screen_delta_to_team(self.ball.vx, self.ball.vy, is_home=is_home)
+                ),
             },
             "match_state": match_state,
         }
@@ -701,25 +690,23 @@ class FootballGame(arcade.Window):
         players: list[Player],
         actions: TeamActions,
         dt: float,
-        flip: bool = False,
+        is_home: bool = True,
     ) -> None:
         """Move and optionally shoot for each player according to AI actions.
 
         Parameters
         ----------
-        flip:
-            When ``True`` both the X and Y components of each move vector are
-            negated, converting from the AI's normalised (always-attack-right,
-            180°-rotation-consistent) frame back into game screen coordinates.
-            Pass ``True`` for Team B.
+        is_home:
+            ``True`` for the home team (team frame = global = screen direction).
+            ``False`` for the away team: both direction components are negated to
+            convert from the AI's attack-right team frame back to screen space.
         """
         for p in players:
             direction = actions["directions"].get(p.number)
             if direction is None:
                 continue
             dx, dy = direction
-            if flip:
-                dx, dy = -dx, -dy
+            dx, dy = team_delta_to_global(dx, dy, is_home=is_home)
             if dx != 0 or dy != 0:
                 norm = math.hypot(dx, dy)
                 # Allow sub-1 magnitude from analogue-style AI outputs
@@ -950,8 +937,6 @@ class FootballGame(arcade.Window):
 
         name_a = self.team_a_config.name
         name_b = self.team_b_config.name
-        W = STANDARD_PITCH_WIDTH
-        H = STANDARD_PITCH_HEIGHT
 
         rows: list[dict[str, object]] = []
         for frame_number, record in enumerate(self._history):
@@ -1001,13 +986,12 @@ class FootballGame(arcade.Window):
 
             for player in record.state["opposition"]:  # team B
                 num = player["number"]
-                # state["opposition"] positions are in global (team A) frame;
-                # flip them to obtain team B's own attack-right frame.
                 gx, gy = player["location"]
-                bx, by = W - gx, H - gy
-                # actions_team_b directions are already in team B's own frame;
-                # negate to obtain the global equivalents.
+                bx, by = global_to_team(gx, gy, is_home=False)
                 dx_b, dy_b = record.actions_team_b["directions"].get(num, [0.0, 0.0])
+                adx_g, ady_g = team_delta_to_global(dx_b, dy_b, is_home=False)
+                bbx, bby = global_to_team(gbx, gby, is_home=False)
+                bbvx, bbvy = global_delta_to_team(gbvx, gbvy, is_home=False)
                 rows.append(
                     {
                         "frame_number": frame_number,
@@ -1024,15 +1008,15 @@ class FootballGame(arcade.Window):
                         "cooldown_timer": player["cooldown_timer"],
                         "action_dx": dx_b,
                         "action_dy": dy_b,
-                        "action_dx_global": -dx_b,
-                        "action_dy_global": -dy_b,
+                        "action_dx_global": adx_g,
+                        "action_dy_global": ady_g,
                         "shoot": record.actions_team_b["shoot"],
-                        "ball_x": W - gbx,
-                        "ball_y": H - gby,
+                        "ball_x": bbx,
+                        "ball_y": bby,
                         "ball_x_global": gbx,
                         "ball_y_global": gby,
-                        "ball_vx": -gbvx,
-                        "ball_vy": -gbvy,
+                        "ball_vx": bbvx,
+                        "ball_vy": bbvy,
                         "ball_vx_global": gbvx,
                         "ball_vy_global": gbvy,
                         "team_score": score_b,
@@ -1060,7 +1044,7 @@ def main() -> None:
 
     game = FootballGame(
         team_a_config=TeamConfig(
-            name="Baseline model", ai=BaselineAI, human_controlled=False
+            name="Baseline model", ai=BaselineAI, human_controlled=True
         ),
         team_b_config=TeamConfig(
             name="Baseline model 2", ai=BaselineAI, human_controlled=False
