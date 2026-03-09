@@ -18,8 +18,8 @@ DEFAULT_PLAYERS: list[PlayerConfig] = [
     PlayerConfig(name="GK", number=1, x=10, y=40),
     PlayerConfig(name="Defender 1", number=2, x=50, y=60),
     PlayerConfig(name="Defender 2", number=3, x=50, y=20),
-    PlayerConfig(name="Forward 1", number=4, x=100, y=70),
-    PlayerConfig(name="Forward 2", number=5, x=100, y=10),
+    PlayerConfig(name="Forward 1", number=4, x=100, y=50),
+    PlayerConfig(name="Forward 2", number=5, x=100, y=30),
 ]
 
 
