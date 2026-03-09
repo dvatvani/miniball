@@ -1,197 +1,168 @@
 import marimo
 
-__generated_with = "0.19.7"
+__generated_with = "0.19.9"
 app = marimo.App(width="wide")
 
 
 @app.cell
 def _():
-    import marimo as mo
-
-    return (mo,)
-
-
-@app.cell
-def _(mo):
-    mo.md("""
-    # 🐚 Marimo Playground
-    Reactive notebook stored in a single `.py` file
-    """)
     return
 
 
 @app.cell
 def _():
-    import sys
-    from pathlib import Path
-
-    sys.path.append(str(Path(__file__).resolve().parent.parent / "src"))
-    return
-
-
-@app.cell
-def _():
-    import duckdb
-    import random
-    import polars as pl
+    import numpy as np
     import matplotlib.pyplot as plt
-    import seaborn as sns
 
-    random.seed(0)  # reproducible results
-    plt.rcParams["figure.figsize"] = (6, 3)
-    return duckdb, pl, plt, random, sns
+    return np, plt
 
 
 @app.cell
-def _(mo):
-    n_samples = mo.ui.slider(100, 5000, step=100, value=1000, label="Samples")
-    mu = mo.ui.number(value=0.0, label="Mean")
-    sigma = mo.ui.slider(0.1, 5.0, step=0.1, value=1.0, label="Std dev")
-
-    mo.hstack([n_samples, mu, sigma])
-    return mu, n_samples, sigma
+def _():
+    players = [
+        dict(name="GK", number=1, x=10, y=40, is_home=True),
+        dict(name="Defender 1", number=2, x=50, y=60, is_home=True),
+        dict(name="Defender 2", number=3, x=50, y=20, is_home=True),
+        dict(name="Forward 1", number=4, x=100, y=50, is_home=True),
+        dict(name="Forward 2", number=5, x=100, y=30, is_home=True),
+        dict(name="GK", number=1, x=120 - 10, y=80 - 40, is_home=False),
+        dict(name="Defender 1", number=2, x=120 - 50, y=80 - 60, is_home=False),
+        dict(name="Defender 2", number=3, x=120 - 50, y=80 - 20, is_home=False),
+        dict(name="Forward 1", number=4, x=120 - 100, y=80 - 50, is_home=False),
+        dict(name="Forward 2", number=5, x=120 - 100, y=80 - 30, is_home=False),
+    ]
+    return (players,)
 
 
 @app.cell
-def _(mu, n_samples, pl, random, sigma):
-    data = [random.gauss(mu.value, sigma.value) for _ in range(n_samples.value)]
-    df = pl.DataFrame({"value": data})
-    return (df,)
+def _(dynamic_data_x, dynamic_data_y, plt):
+    fig2, ax2 = plt.subplots(figsize=(6, 6))
+    ax2.set_xlim(0, 120)
+    ax2.set_ylim(0, 80)
+    ax2.set_xlabel("X")
+    ax2.set_ylabel("Y")
+    ax2.set_title("Drag any puck - closest one will move")
+    ax2.grid(True, alpha=0.3)
 
+    def draw_with_crosshairs(ax, widget):
+        x, y = widget.x[0], widget.y[0]
+        ax.scatter(dynamic_data_x, dynamic_data_y, alpha=0.6)
+        ax.axvline(x, color="red", linestyle="--", alpha=0.7)
+        ax.axhline(y, color="red", linestyle="--", alpha=0.7)
+        ax.set_title(f"Position: ({x:.2f}, {y:.2f})")
+        ax.grid(True, alpha=0.3)
 
-@app.cell
-def _(df):
-    df.head()
+    # multi_puck = ChartPuck.from_callback(
+    #     draw_fn=draw_with_crosshairs,
+    #     fig2,
+    #     x=[p['x'] for p in players],
+    #     y=[p['y'] for p in players],
+    #     puck_color=["#ff0000" if p['is_home'] else "#0000ff" for p in players],
+    # )
+    # plt.close(fig2)
     return
 
 
 @app.cell
-def _(df, duckdb):
-    duckdb.sql(
-        """
-        SELECT
-            COUNT(*) AS rows,
-            AVG(value) AS mean,
-            STDDEV_SAMP(value) AS std_dev,
-            MIN(value) AS min_value,
-            QUANTILE_CONT(value, 0.5) AS median,
-            MAX(value) AS max_value
-        FROM df
-        """
-    ).pl()
+def _():
+    # multi_widget = mo.ui.anywidget(multi_puck)
     return
 
 
 @app.cell
-def _(df, plt, sns):
-    _, ax = plt.subplots()
-    sns.histplot(df["value"].to_list(), bins=30, ax=ax)
-    ax.set_title("Generated distribution")
-    ax.set_xlabel("x")
-    ax.set_ylabel("count")
+def _():
+    # multi_widget
     return
 
 
-@app.cell
-def _(df):
-    print("Mean", f"{df['value'].mean():.2f}")
-    print("Std dev", f"{df['value'].std():.2f}")
-    print("Rows", f"{df.height:,}")
-    return
+@app.cell(hide_code=True)
+def _(np, players):
+    import matplotlib.pyplot as pl
 
+    import scipy as sp
+    import scipy.spatial
+    from types import SimpleNamespace
 
-@app.cell
-def _(pl):
-    sales_df = pl.DataFrame(
-        {
-            "region": [
-                "North",
-                "North",
-                "North",
-                "South",
-                "South",
-                "South",
-                "East",
-                "East",
-                "West",
-                "West",
-                "West",
-                "West",
-            ],
-            "category": [
-                "Hardware",
-                "Software",
-                "Hardware",
-                "Software",
-                "Services",
-                "Hardware",
-                "Services",
-                "Hardware",
-                "Software",
-                "Services",
-                "Hardware",
-                "Software",
-            ],
-            "units": [12, 18, 9, 14, 6, 11, 10, 15, 20, 5, 13, 16],
-            "revenue": [
-                2400,
-                5400,
-                1800,
-                4900,
-                2100,
-                2200,
-                3500,
-                3000,
-                6200,
-                1750,
-                2600,
-                5100,
-            ],
-            "month": [
-                "Jan",
-                "Jan",
-                "Feb",
-                "Jan",
-                "Feb",
-                "Feb",
-                "Jan",
-                "Feb",
-                "Jan",
-                "Jan",
-                "Feb",
-                "Feb",
-            ],
-        }
-    )
-    sales_df
-    return (sales_df,)
+    _players = np.array(
+        [
+            [i["x"] for i in players],
+            [i["y"] for i in players],
+        ]
+    ).T
+    bounding_box = np.array([0.0, 120.0, 0.0, 80.0])  # [x_min, x_max, y_min, y_max]
 
-
-@app.cell
-def _(pl, sales_df):
-    (
-        sales_df.group_by(["region", "category"])
-        .agg(
-            pl.len().alias("orders"),
-            pl.col("units").sum().alias("total_units"),
-            pl.col("revenue").sum().alias("total_revenue"),
-            pl.col("revenue").mean().round(2).alias("avg_revenue"),
+    def bounded_voronoi(
+        players,
+        bounding_box=np.array([0.0, 120.0, 0.0, 80.0]),  # [x_min, x_max, y_min, y_max]
+    ):
+        # Mirror points
+        points_center = players
+        points_left = np.copy(points_center)
+        points_left[:, 0] = bounding_box[0] - (points_left[:, 0] - bounding_box[0])
+        points_right = np.copy(points_center)
+        points_right[:, 0] = bounding_box[1] + (bounding_box[1] - points_right[:, 0])
+        points_down = np.copy(points_center)
+        points_down[:, 1] = bounding_box[2] - (points_down[:, 1] - bounding_box[2])
+        points_up = np.copy(points_center)
+        points_up[:, 1] = bounding_box[3] + (bounding_box[3] - points_up[:, 1])
+        points = np.concat(
+            [points_center, points_left, points_right, points_down, points_up]
         )
-        .with_columns(
-            (pl.col("total_revenue") / pl.col("total_units"))
-            .round(2)
-            .alias("revenue_per_unit"),
-            pl.col("total_revenue")
-            .rank("dense", descending=True)
-            .over("region")
-            .alias("rank_in_region"),
+        # Compute Voronoi
+        vor = sp.spatial.Voronoi(points)
+        return SimpleNamespace(
+            vertices=vor.vertices,
+            filtered_points=points_center,
+            filtered_regions=[
+                vor.regions[i] for i in vor.point_region[: vor.npoints // 5]
+            ],
         )
-        .filter(pl.col("rank_in_region") <= 2)
-        .sort(
-            ["region", "rank_in_region", "total_revenue"],
-            descending=[False, False, True],
-        )
-    )
+
+    def centroid_region(vertices):
+        # Polygon's signed area
+        A = 0
+        # Centroid's x
+        C_x = 0
+        # Centroid's y
+        C_y = 0
+        for i in range(0, len(vertices) - 1):
+            s = (
+                vertices[i, 0] * vertices[i + 1, 1]
+                - vertices[i + 1, 0] * vertices[i, 1]
+            )
+            A = A + s
+            C_x = C_x + (vertices[i, 0] + vertices[i + 1, 0]) * s
+            C_y = C_y + (vertices[i, 1] + vertices[i + 1, 1]) * s
+        A = 0.5 * A
+        C_x = (1.0 / (6.0 * A)) * C_x
+        C_y = (1.0 / (6.0 * A)) * C_y
+        return np.array([[C_x, C_y]])
+
+    vor = bounded_voronoi(_players, bounding_box)
+
+    def plot_bounded_voronoi(vor):
+        fig = pl.figure()
+        ax = fig.gca()
+        # Plot initial points
+        ax.plot(vor.filtered_points[:, 0], vor.filtered_points[:, 1], "b.")
+        # Plot ridges points
+        for region in vor.filtered_regions:
+            vertices = vor.vertices[region, :]
+            ax.plot(vertices[:, 0], vertices[:, 1], "go")
+        # Plot ridges
+        for region in vor.filtered_regions:
+            vertices = vor.vertices[region + [region[0]], :]
+            ax.plot(vertices[:, 0], vertices[:, 1], "k-")
+        # Compute and plot centroids
+        centroids = []
+        for region in vor.filtered_regions:
+            vertices = vor.vertices[region + [region[0]], :]
+            centroid = centroid_region(vertices)
+            centroids.append(list(centroid[0, :]))
+            ax.plot(centroid[:, 0], centroid[:, 1], "r.")
+        return fig
+
+    plot_bounded_voronoi(vor)
     return
 
 
