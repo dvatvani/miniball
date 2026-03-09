@@ -46,6 +46,7 @@ from miniball.config import (
     GOAL_DEPTH,
     GOAL_H,
     JOY_DEAD_ZONE,
+    JOY_SWITCH_THRESHOLD,
     MAX_BALL_SPEED,
     PITCH_B,
     PITCH_CX,
@@ -250,11 +251,24 @@ class FootballGame(arcade.Window):
         self._countdown: float = 3.0  # freeze before kick-off / after each goal
 
         # Gamepad – use the first connected controller if one is present
-        joysticks = arcade.get_joysticks()
+        joysticks = arcade.get_joysticks()  # type: ignore[attr-defined]
         self._joystick = joysticks[0] if joysticks else None
+        # Live dict of axis values populated by on_joyaxis_motion events.
+        # Used by _get_right_stick to auto-detect which axis pair is the right stick.
+        self._joy_axis_state: dict[str, float] = {}
         if self._joystick is not None:
             self._joystick.open()
+            game_self = self  # closure reference
+
+            @self._joystick.event
+            def on_joyaxis_motion(joystick, axis: str, value: float) -> None:  # noqa: ANN001
+                """Keep a live snapshot of every axis; print significant movements."""
+                game_self._joy_axis_state[axis] = value
+                if abs(value) > 0.2:
+                    print(f"[Joystick axis] {axis} = {value:.3f}")
+
         self._joy_shoot_prev = False  # edge-detect the shoot button
+        self._joy_switch_prev = False  # edge-detect the right-stick player switch
 
         for player_config in team_a_config.players:
             sx, sy = normalized_to_screen(player_config.x / 2, player_config.y)
@@ -285,14 +299,25 @@ class FootballGame(arcade.Window):
         self._ai_a: BaseAI = team_a_config.ai
         self._ai_b: BaseAI = team_b_config.ai
 
+        # Which team list the human player belongs to (None = fully AI game).
+        # Index within that list of the currently controlled player (starts on GK = 0).
+        if team_a_config.human_controlled:
+            self._human_team: list[Player] | None = self.team_a
+        elif team_b_config.human_controlled:
+            self._human_team = self.team_b
+        else:
+            self._human_team = None
+        self._controlled_idx: int | None = 0 if self._human_team is not None else None
+
         # Home team (attacks left→right) always takes the opening kick-off
         self._assign_kickoff_possession(self.team_a)
 
     @property
     def _controlled(self) -> Player | None:
-        """Human-controlled player, or ``None`` when the team is fully AI-driven."""
-        idx = self.team_a_config.human_controlled
-        return self.team_a[idx] if idx is not None else None
+        """Human-controlled player, or ``None`` when the game is fully AI-driven."""
+        if self._human_team is None or self._controlled_idx is None:
+            return None
+        return self._human_team[self._controlled_idx]
 
     @property
     def _all_players(self) -> list[Player]:
@@ -381,7 +406,7 @@ class FootballGame(arcade.Window):
             bold=True,
         )
         arcade.draw_text(
-            "Arrows / L-stick to move and aim shot · Space / A to shoot",
+            "Arrows / L-stick to move and aim shot · Space / A to shoot · R-stick to switch controlled player",
             SCREEN_W / 2,
             28,
             C_HINT,
@@ -478,6 +503,14 @@ class FootballGame(arcade.Window):
                 if shoot_now and not self._joy_shoot_prev:
                     self._handle_shoot()
                 self._joy_shoot_prev = shoot_now
+
+            # Right stick – switch controlled player on flick (edge-triggered)
+            if self._joystick is not None:
+                jrx, jry = self._get_right_stick()
+                switch_now = math.hypot(jrx, jry) > JOY_SWITCH_THRESHOLD
+                if switch_now and not self._joy_switch_prev:
+                    self._switch_controlled_player(jrx, jry)
+                self._joy_switch_prev = switch_now
 
         # 2b. AI move + shoot for non-human players.
         #     Each team's state is normalised to attack right; flip_x converts
@@ -647,6 +680,64 @@ class FootballGame(arcade.Window):
 
         return dx, dy
 
+    def _get_right_stick(self) -> tuple[float, float]:
+        """Return the (dx, dy) vector of the right analogue stick.
+
+        Pyglet pre-initialises ALL axis attributes to 0 on every Joystick
+        object regardless of whether the hardware has them, so ``hasattr``
+        cannot distinguish real axes from phantom ones.  Instead we rely on
+        ``_joy_axis_state``, which is populated only when the OS actually
+        fires an ``on_joyaxis_motion`` event, making it a reliable proxy for
+        "this axis physically exists on this device".
+
+        Candidate pairs tried in order (first whose keys appear in the state
+        dict wins):
+          • ('z', 'rz')  – PS / generic gamepads on macOS
+          • ('rx', 'ry') – Xbox / standard HID
+        Applies the same Pyglet Y-axis inversion as the left stick.
+        """
+        if self._joystick is None:
+            return 0.0, 0.0
+        state = self._joy_axis_state
+        for x_attr, y_attr in (("z", "rz"), ("rx", "ry")):
+            if x_attr in state or y_attr in state:
+                return state.get(x_attr, 0.0), -state.get(y_attr, 0.0)
+        return 0.0, 0.0
+
+    def _switch_controlled_player(self, dx: float, dy: float) -> None:
+        """Switch human control to the teammate whose position is most in the direction (dx, dy).
+
+        The teammate with the smallest angular difference between the flick
+        direction and the vector from the current controlled player to that
+        teammate is selected.
+        """
+        if self._human_team is None or self._controlled_idx is None:
+            return
+        current = self._controlled
+        if current is None:
+            return
+
+        flick_angle = math.atan2(dy, dx)
+        best_idx: int | None = None
+        best_diff = float("inf")
+
+        for i, p in enumerate(self._human_team):
+            if p is current:
+                continue
+            angle_to = math.atan2(p.y - current.y, p.x - current.x)
+            # Wrap angular difference to [-π, π]
+            diff = abs(
+                math.atan2(
+                    math.sin(angle_to - flick_angle), math.cos(angle_to - flick_angle)
+                )
+            )
+            if diff < best_diff:
+                best_diff = diff
+                best_idx = i
+
+        if best_idx is not None:
+            self._controlled_idx = best_idx
+
     def _handle_shoot(self, player: Player | None = None) -> None:
         """Launch the ball in ``player``'s facing direction.
 
@@ -764,9 +855,11 @@ def main() -> None:
 
     game = FootballGame(
         team_a_config=TeamConfig(
-            name="Baseline model", ai=BaselineAI, human_controlled=None
+            name="Baseline model", ai=BaselineAI, human_controlled=False
         ),
-        team_b_config=TeamConfig(name="Baseline model 2", ai=BaselineAI),
+        team_b_config=TeamConfig(
+            name="Baseline model 2", ai=BaselineAI, human_controlled=False
+        ),
     )
     game.run()
 

@@ -29,7 +29,7 @@ class TeamConfig:
         name: str,
         players: list[PlayerConfig] | None = None,
         ai: type[BaseAI] = StationaryAI,
-        human_controlled: int | None = None,
+        human_controlled: bool = False,
     ) -> None:
         self.name = name
         self.players = players if players is not None else list(DEFAULT_PLAYERS)
