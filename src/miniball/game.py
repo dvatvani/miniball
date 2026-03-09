@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 import random
+from dataclasses import dataclass
 
 import arcade
 
@@ -70,6 +71,30 @@ from miniball.coordinate_transformations import (
     screen_to_normalized,
 )
 from miniball.team_config import TeamConfig
+
+# ── Analytics types ───────────────────────────────────────────────────────────
+
+
+@dataclass
+class FrameRecord:
+    """Single-frame snapshot used for post-game analysis.
+
+    ``state`` is expressed in team A's coordinate system (team A always
+    attacks right), which serves as the global pitch reference frame.
+
+    ``actions_team_a`` and ``actions_team_b`` are each in their own team's
+    normalised frame (both teams attack right in their respective frames).
+    To convert team B's directions to the global frame, negate both components.
+
+    Human input overrides are already merged in: these are the *effective*
+    actions that were sent to the game engine, not the raw AI outputs.
+    """
+
+    game_time: float  # seconds elapsed since kick-off
+    state: GameState  # global reference frame (team A perspective)
+    actions_team_a: TeamActions  # normalised; team A attacks right
+    actions_team_b: TeamActions  # normalised; team B's own frame (also attacks right)
+
 
 # ── Entities ─────────────────────────────────────────────────────────────────
 
@@ -269,6 +294,12 @@ class FootballGame(arcade.Window):
 
         self._joy_shoot_prev = False  # edge-detect the shoot button
         self._joy_switch_prev = False  # edge-detect the right-stick player switch
+        self._human_shoot_requested = (
+            False  # set for one frame when human presses shoot
+        )
+
+        # Per-frame history recorded during gameplay for post-game analytics
+        self._history: list[FrameRecord] = []
 
         for player_config in team_a_config.players:
             sx, sy = normalized_to_screen(player_config.x / 2, player_config.y)
@@ -453,7 +484,7 @@ class FootballGame(arcade.Window):
     def on_key_press(self, key: int, modifiers: int) -> None:
         self._keys.add(key)
         if key == arcade.key.SPACE:
-            self._handle_shoot()
+            self._human_shoot_requested = True
 
     def on_key_release(self, key: int, modifiers: int) -> None:
         self._keys.discard(key)
@@ -488,47 +519,49 @@ class FootballGame(arcade.Window):
         for p in self._all_players:
             p.tick(dt)
 
-        # 2. Move the controlled player (skipped when team is fully AI-driven)
-        if self._controlled is not None:
-            dx, dy = self._get_move_input()
-            if dx != 0 or dy != 0:
-                norm = math.hypot(dx, dy)
-                self._controlled.x += (dx / norm) * PLAYER_SPEED * dt
-                self._controlled.y += (dy / norm) * PLAYER_SPEED * dt
-                self._controlled.facing = math.atan2(dy, dx)
-
-            # Gamepad shoot button (A / Cross = button 0) – edge-triggered
-            if self._joystick is not None and self._joystick.buttons:
+        # 2. Gamepad inputs that are not movement: shoot button and player switch.
+        #    (Movement is folded into the effective-actions layer below.)
+        if self._controlled is not None and self._joystick is not None:
+            if self._joystick.buttons:
                 shoot_now = bool(self._joystick.buttons[0])
                 if shoot_now and not self._joy_shoot_prev:
-                    self._handle_shoot()
+                    self._human_shoot_requested = True
                 self._joy_shoot_prev = shoot_now
 
-            # Right stick – switch controlled player on flick (edge-triggered)
-            if self._joystick is not None:
-                jrx, jry = self._get_right_stick()
-                switch_now = math.hypot(jrx, jry) > JOY_SWITCH_THRESHOLD
-                if switch_now and not self._joy_switch_prev:
-                    self._switch_controlled_player(jrx, jry)
-                self._joy_switch_prev = switch_now
+            jrx, jry = self._get_right_stick()
+            switch_now = math.hypot(jrx, jry) > JOY_SWITCH_THRESHOLD
+            if switch_now and not self._joy_switch_prev:
+                self._switch_controlled_player(jrx, jry)
+            self._joy_switch_prev = switch_now
 
-        # 2b. AI move + shoot for non-human players.
-        #     Each team's state is normalised to attack right; flip_x converts
-        #     the returned move vectors back to screen coordinates.
+        # 3. Build game states and compute effective actions (AI + human overrides).
+        #    Both teams use normalised coords (attack right); flip is applied later.
         home_team_state = self._build_game_state(True)
-        self._apply_ai_actions(
-            [p for p in self.team_a if p is not self._controlled],
-            self._ai_a.get_actions(home_team_state),
-            dt,
-            flip=False,  # Team A attacks right – no rotation needed
-        )
         away_team_state = self._build_game_state(False)
-        self._apply_ai_actions(
-            [p for p in self.team_b if p is not self._controlled],
-            self._ai_b.get_actions(away_team_state),
-            dt,
-            flip=True,  # Team B: 180° rotation back to screen coords
+        effective_a = self._get_team_effective_actions(
+            self._ai_a, home_team_state, is_home_team=True
         )
+        effective_b = self._get_team_effective_actions(
+            self._ai_b, away_team_state, is_home_team=False
+        )
+
+        # 4. Record this frame for post-game analytics.
+        self._history.append(
+            FrameRecord(
+                game_time=GAME_DURATION - self._time_remaining,
+                state=home_team_state,
+                actions_team_a=effective_a,
+                actions_team_b=effective_b,
+            )
+        )
+
+        # 5. Apply effective actions to all players; team B vectors are flipped
+        #    from normalised back to screen coordinates inside _apply_ai_actions.
+        self._apply_ai_actions(self.team_a, effective_a, dt, flip=False)
+        self._apply_ai_actions(self.team_b, effective_b, dt, flip=True)
+
+        # Consume the single-frame shoot flag now that both teams have seen it.
+        self._human_shoot_requested = False
 
         # 3. Clamp all players to pitch
         self._clamp_players()
@@ -547,6 +580,52 @@ class FootballGame(arcade.Window):
         self._check_goals()
 
     # ── AI interface ─────────────────────────────────────────────────────────
+
+    def _get_team_effective_actions(
+        self,
+        ai: BaseAI,
+        state: GameState,
+        *,
+        is_home_team: bool,
+    ) -> TeamActions:
+        """Return the effective TeamActions for one team this frame.
+
+        Layer 1 – AI decisions
+            ``ai.get_actions(state)`` is called first to obtain the base
+            actions for every player.
+
+        Layer 2 – human overrides
+            If the human-controlled player belongs to this team, their entry
+            in ``directions`` is replaced with the current controller / keyboard
+            input (converted from screen space to normalised coords), and the
+            ``shoot`` flag is set if the human pressed the shoot button this
+            frame.
+
+        All directions in the returned dict are in normalised pitch coordinates
+        (team attacks right).  The game engine's ``_apply_ai_actions`` handles
+        the screen-space conversion (flip) for team B.
+        """
+        actions = ai.get_actions(state)
+
+        team = self.team_a if is_home_team else self.team_b
+        if self._human_team is not team or self._controlled_idx is None:
+            return actions
+
+        controlled = self._controlled
+        if controlled is None:
+            return actions
+
+        # Human direction: keyboard/gamepad input is in screen space.
+        # For team B (attacks left on screen) negate to reach normalised frame.
+        dx, dy = self._get_move_input()
+        if not is_home_team:
+            dx, dy = -dx, -dy
+        actions["directions"][controlled.number] = [dx, dy]
+
+        if self._human_shoot_requested:
+            actions["shoot"] = True
+
+        return actions
 
     def _build_game_state(self, perspective_team_is_home: bool) -> GameState:
         """Snapshot the current game into a normalised AI state dict.
@@ -851,14 +930,14 @@ class FootballGame(arcade.Window):
 
 
 def main() -> None:
-    from miniball.ai import BaselineAI
+    from miniball.ai import StationaryAI
 
     game = FootballGame(
         team_a_config=TeamConfig(
-            name="Baseline model", ai=BaselineAI, human_controlled=False
+            name="Baseline model", ai=StationaryAI, human_controlled=True
         ),
         team_b_config=TeamConfig(
-            name="Baseline model 2", ai=BaselineAI, human_controlled=False
+            name="Baseline model 2", ai=StationaryAI, human_controlled=False
         ),
     )
     game.run()
