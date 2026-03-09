@@ -17,12 +17,12 @@ GOAL_DEPTH = 32  # how far the goal box extends behind the goal line
 PLAYER_RADIUS = 18
 BALL_RADIUS = 10
 PLAYER_SPEED = 180  # px / s
-BALL_DRAG = 1.3  # speed loss per second (free ball, linear model)
-SHOOT_SPEED = 750  # px / s on a Space-bar kick
+BALL_DRAG = 0.7  # speed loss per second (free ball, linear model)
+SHOOT_SPEED = 550  # px / s on a Space-bar kick
 MAX_BALL_SPEED = 700
 GAME_DURATION = 60.0  # seconds per half (full game = one period)
 TACKLE_COOLDOWN = 1.0  # seconds unable to gain the ball after being tackled
-SHOT_COOLDOWN = 0.4  # seconds before the kicker can re-absorb their own shot
+SHOT_COOLDOWN = 1.0  # seconds before the kicker can re-absorb their own shot
 COOLDOWN_ALPHA = 90  # draw opacity (0–255) while on cooldown (~35 %)
 JOY_DEAD_ZONE = 0.15  # ignore analogue stick values below this magnitude
 
