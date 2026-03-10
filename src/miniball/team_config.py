@@ -59,7 +59,7 @@ class TeamConfig:
         )
 
 
-teams = [
+teams_list = [
     TeamConfig(name="Baseline AI (1-2-2)", ai=BaselineAI),
     TeamConfig(
         name="Baseline AI (1-3-1)",
@@ -72,5 +72,19 @@ teams = [
             PlayerConfig(name="Forward 1", number=5, x=105, y=40),
         ],
     ),
+    TeamConfig(
+        name="Baseline AI (1-1-3)",
+        ai=BaselineAI,
+        players=[
+            PlayerConfig(name="GK", number=1, x=5, y=40),
+            PlayerConfig(name="Defender 1", number=2, x=40, y=40),
+            PlayerConfig(name="Forward 1", number=3, x=100, y=40),
+            PlayerConfig(name="Forward 2", number=4, x=105, y=60),
+            PlayerConfig(name="Forward 3", number=5, x=105, y=20),
+        ],
+    ),
     TeamConfig(name="BallChasers AI", ai=BallChasersAI),
+    TeamConfig(name="Stationary AI", ai=StationaryAI),
 ]
+
+teams = {team.name: team for team in teams_list}
