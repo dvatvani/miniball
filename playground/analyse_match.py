@@ -202,7 +202,6 @@ def _(color_map, frame_selector, match_data, pl, plt):
 
     # filter out NaN (NaN != NaN) and zero-length vectors
     if not (_dx != _dx or _dy != _dy) and not (_dx == 0.0 and _dy == 0.0):
-        print("test")
         _ax_frame.arrow(
             _frame_df.iloc[0]["ball_x_global"],
             _frame_df.iloc[0]["ball_y_global"],

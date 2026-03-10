@@ -60,9 +60,9 @@ class TeamConfig:
 
 
 teams_list = [
-    TeamConfig(name="Baseline AI (1-2-2)", ai=BaselineAI),
+    TeamConfig(name="Baseline (1-2-2)", ai=BaselineAI),
     TeamConfig(
-        name="Baseline AI (1-3-1)",
+        name="Baseline (1-3-1)",
         ai=BaselineAI,
         players=[
             PlayerConfig(name="GK", number=1, x=5, y=40),
@@ -73,7 +73,7 @@ teams_list = [
         ],
     ),
     TeamConfig(
-        name="Baseline AI (1-1-3)",
+        name="Baseline (1-1-3)",
         ai=BaselineAI,
         players=[
             PlayerConfig(name="GK", number=1, x=5, y=40),
@@ -83,8 +83,19 @@ teams_list = [
             PlayerConfig(name="Forward 3", number=5, x=105, y=20),
         ],
     ),
-    TeamConfig(name="BallChasers AI", ai=BallChasersAI),
-    TeamConfig(name="Stationary AI", ai=StationaryAI),
+    TeamConfig(name="Ball Chasers", ai=BallChasersAI),
+    TeamConfig(name="Stationary", ai=StationaryAI),
+    TeamConfig(
+        name="Static Defensive",
+        ai=StationaryAI,
+        players=[
+            PlayerConfig(name="GK", number=1, x=5, y=40),
+            PlayerConfig(name="Defender 1", number=2, x=15, y=55),
+            PlayerConfig(name="Defender 2", number=3, x=15, y=45),
+            PlayerConfig(name="Defender 3", number=4, x=15, y=35),
+            PlayerConfig(name="Defender 4", number=5, x=15, y=25),
+        ],
+    ),
 ]
 
 teams = {team.name: team for team in teams_list}

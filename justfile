@@ -9,6 +9,9 @@ default:
 play:
   uv run python -m miniball.main
 
+run-league-simulation:
+  uv run python -m miniball.league_simulation
+
 # Synchronize dependencies from lockfile
 sync:
     uv sync

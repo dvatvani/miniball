@@ -716,8 +716,8 @@ def main() -> None:
     from miniball.team_config import teams
 
     game = FootballGame(
-        team_a_config=teams["Baseline AI (1-2-2)"],
-        team_b_config=teams["Baseline AI (1-3-1)"],
+        team_a_config=teams["Baseline (1-2-2)"],
+        team_b_config=teams["Static Defensive"],
         human_team="home",  # "home" | "away" | None  (will become a CLI arg)
     )
     game.run()
