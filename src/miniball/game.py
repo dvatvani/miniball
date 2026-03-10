@@ -713,12 +713,37 @@ class FootballGame(arcade.Window):
 
 
 def main() -> None:
-    from miniball.team_config import teams
+    import questionary
+
+    from miniball.team_config import teams, teams_list
+
+    team_names = [t.name for t in teams_list]
+
+    home_name = questionary.select(
+        "Home team AI (Starts with ball):",
+        choices=team_names,
+    ).ask()
+
+    away_name = questionary.select(
+        "Away team AI:",
+        choices=[n for n in team_names if n != home_name],
+    ).ask()
+
+    human_side = questionary.select(
+        "Control a player on a team with a controller (recommended) or keyboard?",
+        choices=["home", "away", "none (watch AI match)"],
+    ).ask()
+
+    human_team: Literal["home", "away"] | None = None
+    if human_side == "home":
+        human_team = "home"
+    elif human_side == "away":
+        human_team = "away"
 
     game = FootballGame(
-        team_a_config=teams["Baseline (1-2-2)"],
-        team_b_config=teams["Static Defensive"],
-        human_team="home",  # "home" | "away" | None  (will become a CLI arg)
+        team_a_config=teams[home_name],
+        team_b_config=teams[away_name],
+        human_team=human_team,
     )
     game.run()
 

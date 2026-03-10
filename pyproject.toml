@@ -8,6 +8,7 @@ dependencies = [
     "marimo>=0.19.9",
     "polars>=1.0.0",
     "pydantic-ai-slim>=1.67.0",
+    "questionary>=2.1.1",
     "rich>=14.3.3",
     "scipy>=1.15.0",
     "shapely>=2.1.2",
