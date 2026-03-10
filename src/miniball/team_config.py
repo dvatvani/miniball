@@ -29,13 +29,11 @@ class TeamConfig:
         name: str,
         players: list[PlayerConfig] | None = None,
         ai: type[BaseAI] = StationaryAI,
-        human_controlled: bool = False,
     ) -> None:
         self.name = name
         self.players = players if players is not None else list(DEFAULT_PLAYERS)
         formation = {p.number: [p.x, p.y] for p in self.players}
         self.ai = ai(formation=formation)
-        self.human_controlled = human_controlled
         assert len(self.players) == 5, "Team must have 5 players"
         assert all(isinstance(p, PlayerConfig) for p in self.players), (
             "Players must be of type PlayerConfig"
@@ -62,11 +60,10 @@ class TeamConfig:
 
 
 teams = [
-    TeamConfig(name="Baseline AI (1-2-2)", ai=BaselineAI, human_controlled=False),
+    TeamConfig(name="Baseline AI (1-2-2)", ai=BaselineAI),
     TeamConfig(
         name="Baseline AI (1-3-1)",
         ai=BaselineAI,
-        human_controlled=False,
         players=[
             PlayerConfig(name="GK", number=1, x=5, y=40),
             PlayerConfig(name="Defender 1", number=2, x=40, y=60),
@@ -75,5 +72,5 @@ teams = [
             PlayerConfig(name="Forward 1", number=5, x=105, y=40),
         ],
     ),
-    TeamConfig(name="BallChasers AI", ai=BallChasersAI, human_controlled=False),
+    TeamConfig(name="BallChasers AI", ai=BallChasersAI),
 ]

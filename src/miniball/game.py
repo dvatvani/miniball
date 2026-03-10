@@ -27,6 +27,8 @@ from datetime import datetime
 from pathlib import Path
 
 import arcade
+from typing import Literal
+
 import polars as pl
 
 from miniball import match_stats
@@ -274,7 +276,12 @@ class Player:
 
 
 class FootballGame(arcade.Window):
-    def __init__(self, team_a_config: TeamConfig, team_b_config: TeamConfig) -> None:
+    def __init__(
+        self,
+        team_a_config: TeamConfig,
+        team_b_config: TeamConfig,
+        human_team: Literal["home", "away"] | None = None,
+    ) -> None:
         super().__init__(SCREEN_W, SCREEN_H, TITLE)
         arcade.set_background_color((30, 30, 30, 255))
 
@@ -352,9 +359,9 @@ class FootballGame(arcade.Window):
 
         # Which team list the human player belongs to (None = fully AI game).
         # Index within that list of the currently controlled player (starts on GK = 0).
-        if team_a_config.human_controlled:
+        if human_team == "home":
             self._human_team: list[Player] | None = self.team_a
-        elif team_b_config.human_controlled:
+        elif human_team == "away":
             self._human_team = self.team_b
         else:
             self._human_team = None
@@ -1335,6 +1342,7 @@ def main() -> None:
     game = FootballGame(
         team_a_config=teams[0],
         team_b_config=teams[1],
+        human_team=None,  # "home" | "away" | None  (will become a CLI arg)
     )
     game.run()
 
