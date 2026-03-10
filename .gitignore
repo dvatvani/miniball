@@ -129,3 +129,6 @@ dmypy.json
 .idea
 
 .DS_Store
+
+# Match data
+match_data/
