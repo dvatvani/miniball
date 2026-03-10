@@ -35,7 +35,7 @@ def _(glob):
 @app.cell
 def _(match_files, mo):
     selected_match = mo.ui.dropdown(
-        match_files, value=match_files[0], label="Select match"
+        match_files, value=match_files[-1], label="Select match"
     )
     selected_match
     return (selected_match,)
@@ -118,15 +118,6 @@ def _(match_data, mo):
     )
     frame_selector
     return (frame_selector,)
-
-
-@app.cell
-def _(frame_selector, match_data, pl):
-    _frame_df = match_data.filter(
-        pl.col("frame_number") == frame_selector.value
-    ).to_pandas()
-    _frame_df
-    return
 
 
 @app.cell
@@ -236,8 +227,11 @@ def _(color_map, frame_selector, match_data, pl, plt):
 
 
 @app.cell
-def _():
-    # multi_widget
+def _(frame_selector, match_data, pl):
+    _frame_df = match_data.filter(
+        pl.col("frame_number") == frame_selector.value
+    ).to_pandas()
+    _frame_df
     return
 
 

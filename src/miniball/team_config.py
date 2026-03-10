@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from miniball.ai import BaseAI, StationaryAI
+from miniball.ai import BallChasersAI, BaseAI, BaselineAI, StationaryAI
 from miniball.config import STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
 
 
@@ -15,7 +15,7 @@ class PlayerConfig:
 
 
 DEFAULT_PLAYERS: list[PlayerConfig] = [
-    PlayerConfig(name="GK", number=1, x=10, y=40),
+    PlayerConfig(name="GK", number=1, x=5, y=40),
     PlayerConfig(name="Defender 1", number=2, x=50, y=60),
     PlayerConfig(name="Defender 2", number=3, x=50, y=20),
     PlayerConfig(name="Forward 1", number=4, x=100, y=50),
@@ -59,3 +59,21 @@ class TeamConfig:
         assert len(set(p.number for p in self.players)) == len(self.players), (
             "Players must have unique numbers"
         )
+
+
+teams = [
+    TeamConfig(name="Baseline AI (1-2-2)", ai=BaselineAI, human_controlled=False),
+    TeamConfig(
+        name="Baseline AI (1-3-1)",
+        ai=BaselineAI,
+        human_controlled=False,
+        players=[
+            PlayerConfig(name="GK", number=1, x=5, y=40),
+            PlayerConfig(name="Defender 1", number=2, x=40, y=60),
+            PlayerConfig(name="Defender 2", number=3, x=30, y=40),
+            PlayerConfig(name="Defender 3", number=4, x=40, y=20),
+            PlayerConfig(name="Forward 1", number=5, x=105, y=40),
+        ],
+    ),
+    TeamConfig(name="BallChasers AI", ai=BallChasersAI, human_controlled=False),
+]

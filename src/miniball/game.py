@@ -27,7 +27,9 @@ from datetime import datetime
 from pathlib import Path
 
 import arcade
+import polars as pl
 
+from miniball import match_stats
 from miniball.ai import (
     BaseAI,
     GameState,
@@ -70,6 +72,8 @@ from miniball.config import (
     SCREEN_W,
     SHOOT_SPEED,
     SHOT_COOLDOWN,
+    STANDARD_PITCH_HEIGHT,
+    STANDARD_PITCH_WIDTH,
     TACKLE_COOLDOWN,
     TITLE,
 )
@@ -283,6 +287,12 @@ class FootballGame(arcade.Window):
         self.score_b = 0
         self._time_remaining: float = GAME_DURATION
         self._game_over = False
+        self._stats_countdown: float = (
+            3.0  # delay after final whistle before showing stats
+        )
+        self._show_stats: bool = False
+        self._team_summary_df: pl.DataFrame | None = None
+        self._avg_positions_df: pl.DataFrame | None = None
         self._keys: set[int] = set()
         self._goal_flash = 0.0
         self._countdown: float = 3.0  # freeze before kick-off / after each goal
@@ -368,6 +378,9 @@ class FootballGame(arcade.Window):
 
     def on_draw(self) -> None:
         self.clear()
+        if self._show_stats:
+            self._draw_stats_screen()
+            return
         self._draw_pitch()
         self.ball.draw()
         for p in self._all_players:
@@ -489,6 +502,247 @@ class FootballGame(arcade.Window):
                 bold=True,
             )
 
+    def _draw_stats_screen(self) -> None:
+        """Render the post-match summary statistics screen.
+
+        Layout
+        ──────
+        Left  ~45 %  Mini pitch with average-position dots + colour legend.
+        Right ~55 %  Team names header + one bar-chart row per statistic,
+                     with each team's value displayed on its own side of the bar.
+        """
+        # ── Background ───────────────────────────────────────────────────────
+        arcade.draw_lrbt_rectangle_filled(0, SCREEN_W, 0, SCREEN_H, (15, 35, 15))
+
+        # ── Header (full-width) ───────────────────────────────────────────────
+        arcade.draw_text(
+            "FULL TIME",
+            SCREEN_W / 2,
+            763,
+            (255, 220, 0),
+            font_size=52,
+            anchor_x="center",
+            anchor_y="center",
+            bold=True,
+        )
+        arcade.draw_text(
+            f"{self.team_a_config.name}  {self.score_a} – {self.score_b}"
+            f"  {self.team_b_config.name}",
+            SCREEN_W / 2,
+            715,
+            (255, 255, 255),
+            font_size=24,
+            anchor_x="center",
+            anchor_y="center",
+        )
+
+        # ── Mini pitch (left, 480 × 320, scale = 4 px/unit) ──────────────────
+        _S = 4
+        _PW = STANDARD_PITCH_WIDTH * _S  # 480
+        _PH = STANDARD_PITCH_HEIGHT * _S  # 320
+        _PL = 30
+        _PB = 200
+        _PT = _PB + _PH  # 520
+        _PCX = _PL + _PW // 2  # 270
+        _PCY = _PB + _PH // 2  # 360
+
+        _mpw = PITCH_R - PITCH_L  # main-pitch pixel width
+        _mph = PITCH_T - PITCH_B  # main-pitch pixel height
+        _goal_h = round(GOAL_H / _mph * STANDARD_PITCH_HEIGHT * _S)
+        _goal_d = round(GOAL_DEPTH / _mpw * STANDARD_PITCH_WIDTH * _S)
+        _circle_r = round(70 / _mpw * STANDARD_PITCH_WIDTH * _S)
+
+        arcade.draw_lrbt_rectangle_filled(_PL, _PL + _PW, _PB, _PT, C_GRASS)
+        arcade.draw_lrbt_rectangle_outline(_PL, _PL + _PW, _PB, _PT, C_LINE, 2)
+        arcade.draw_line(_PCX, _PB, _PCX, _PT, C_LINE, 1)
+        arcade.draw_circle_outline(_PCX, _PCY, _circle_r, C_LINE, 1)
+
+        _g_lo = _PCY - _goal_h // 2
+        _g_hi = _PCY + _goal_h // 2
+        # Away goal (left – global x = 0)
+        arcade.draw_lrbt_rectangle_filled(_PL - _goal_d, _PL, _g_lo, _g_hi, C_GOAL)
+        arcade.draw_lrbt_rectangle_outline(_PL - _goal_d, _PL, _g_lo, _g_hi, C_LINE, 1)
+        # Home goal (right – global x = 120)
+        arcade.draw_lrbt_rectangle_filled(
+            _PL + _PW, _PL + _PW + _goal_d, _g_lo, _g_hi, C_GOAL
+        )
+        arcade.draw_lrbt_rectangle_outline(
+            _PL + _PW, _PL + _PW + _goal_d, _g_lo, _g_hi, C_LINE, 1
+        )
+
+        # Average-position dots
+        if self._avg_positions_df is not None:
+            for row in self._avg_positions_df.iter_rows(named=True):
+                dot_x = _PL + row["avg_x"] * _S
+                dot_y = _PB + row["avg_y"] * _S
+                dot_color: tuple[int, int, int] = (
+                    C_TEAM_A if row["is_home"] else C_TEAM_B
+                )
+                arcade.draw_circle_filled(dot_x, dot_y, 7, dot_color)
+                arcade.draw_circle_outline(dot_x, dot_y, 7, (20, 20, 20), 1)
+
+        # Colour legend below pitch
+        _leg_y = _PB - 32
+        arcade.draw_circle_filled(_PL + 8, _leg_y + 5, 6, C_TEAM_A)
+        arcade.draw_text(
+            f"  {self.team_a_config.name} (home)", _PL + 14, _leg_y - 3, C_TEAM_A, 13
+        )
+        arcade.draw_circle_filled(_PL + _PW // 2 + 8, _leg_y + 5, 6, C_TEAM_B)
+        arcade.draw_text(
+            f"  {self.team_b_config.name} (away)",
+            _PL + _PW // 2 + 14,
+            _leg_y - 3,
+            C_TEAM_B,
+            13,
+        )
+
+        # ── Stats panel (right) ───────────────────────────────────────────────
+        _SX = 545  # left edge of stats panel
+        _SR = 1175  # right edge
+
+        if self._team_summary_df is None:
+            return
+        try:
+            home = self._team_summary_df.filter(pl.col("is_home")).row(0, named=True)
+            away = self._team_summary_df.filter(~pl.col("is_home")).row(0, named=True)
+        except Exception:
+            return
+
+        # Vertically align the stats table with the pitch on the left.
+        # _PT / _PB are the pitch top / bottom pixel coordinates computed above.
+        _hdr_y = _PT - 14  # team-name header centre
+        _sep_y = _PT - 30  # divider line
+        _top_row_y = _PT - 62  # centre of first stat row
+        _bot_row_y = _PB + 20  # centre of last  stat row
+
+        # Team-name header row
+        arcade.draw_text(
+            str(home["team"]), _SX, _hdr_y, C_TEAM_A, 18, bold=True, anchor_y="center"
+        )
+        arcade.draw_text(
+            str(away["team"]),
+            _SR,
+            _hdr_y,
+            C_TEAM_B,
+            18,
+            bold=True,
+            anchor_x="right",
+            anchor_y="center",
+        )
+        arcade.draw_line(_SX, _sep_y, _SR, _sep_y, (80, 110, 80), 1)
+
+        # One bar-chart row per statistic
+        def _fval(v: int | float | None) -> float:
+            """Coerce a possibly-null stat value to float."""
+            return float(v) if v is not None else 0.0
+
+        stat_rows: list[tuple[str, float, float, str]] = [
+            ("Goals", _fval(home["goals"]), _fval(away["goals"]), "{:.0f}"),
+            ("Shots", _fval(home["shots"]), _fval(away["shots"]), "{:.0f}"),
+            (
+                "Possession",
+                _fval(home["possession_pct"]),
+                _fval(away["possession_pct"]),
+                "{:.1f}%",
+            ),
+            (
+                "Avg poss. duration",
+                _fval(home["avg_duration"]),
+                _fval(away["avg_duration"]),
+                "{:.1f}s",
+            ),
+        ]
+        # Distribute rows evenly between _top_row_y and _bot_row_y.
+        n = len(stat_rows)
+        dynamic_step = (_top_row_y - _bot_row_y) / (n - 1) if n > 1 else 0.0
+        for i, (label, h_val, a_val, fmt) in enumerate(stat_rows):
+            self._draw_stat_bar_row(
+                _SX, _SR, _top_row_y - i * dynamic_step, label, h_val, a_val, fmt
+            )
+
+    def _draw_stat_bar_row(
+        self,
+        panel_x: float,
+        panel_r: float,
+        row_y: float,
+        label: str,
+        home_val: float,
+        away_val: float,
+        fmt: str,
+    ) -> None:
+        """Draw one statistic row: label | home value | stacked bar | away value.
+
+        The stacked bar is split left/right in proportion to the two teams' values.
+        A thin guide line marks the 50 % mid-point for quick visual reference.
+        """
+        label_w: float = 150
+        val_w: float = 80
+        gap: float = 10
+        bar_left = panel_x + label_w + val_w + gap
+        bar_right = panel_r - val_w - gap
+        bar_w = bar_right - bar_left  # ~300 px
+        bar_h: float = 30
+
+        # Stat label
+        arcade.draw_text(label, panel_x, row_y, C_HINT, 15, anchor_y="center")
+
+        # Numeric values (coloured, bold, flanking the bar)
+        arcade.draw_text(
+            fmt.format(home_val),
+            bar_left - gap,
+            row_y,
+            C_TEAM_A,
+            16,
+            anchor_x="right",
+            anchor_y="center",
+            bold=True,
+        )
+        arcade.draw_text(
+            fmt.format(away_val),
+            bar_right + gap,
+            row_y,
+            C_TEAM_B,
+            16,
+            anchor_y="center",
+            bold=True,
+        )
+
+        # Stacked bar fill
+        total = home_val + away_val
+        home_frac = home_val / total if total > 0 else 0.5
+        home_w = bar_w * home_frac
+        bar_lo = row_y - bar_h / 2
+        bar_hi = row_y + bar_h / 2
+
+        home_fill: tuple[int, int, int, int] = (
+            C_TEAM_A[0],
+            C_TEAM_A[1],
+            C_TEAM_A[2],
+            200,
+        )
+        away_fill: tuple[int, int, int, int] = (
+            C_TEAM_B[0],
+            C_TEAM_B[1],
+            C_TEAM_B[2],
+            200,
+        )
+
+        if home_w > 0:
+            arcade.draw_lrbt_rectangle_filled(
+                bar_left, bar_left + home_w, bar_lo, bar_hi, home_fill
+            )
+        if home_w < bar_w:
+            arcade.draw_lrbt_rectangle_filled(
+                bar_left + home_w, bar_right, bar_lo, bar_hi, away_fill
+            )
+
+        # Border + 50 % guide
+        arcade.draw_lrbt_rectangle_outline(
+            bar_left, bar_right, bar_lo, bar_hi, C_HINT, 1
+        )
+        mid_x = bar_left + bar_w / 2
+        arcade.draw_line(mid_x, bar_lo + 2, mid_x, bar_hi - 2, (160, 160, 160), 1)
+
     # ── Input ─────────────────────────────────────────────────────────────────
 
     def on_key_press(self, key: int, modifiers: int) -> None:
@@ -505,6 +759,10 @@ class FootballGame(arcade.Window):
         dt = min(delta_time, 1 / 30)
 
         if self._game_over:
+            if not self._show_stats:
+                self._stats_countdown -= dt
+                if self._stats_countdown <= 0:
+                    self._show_stats = True
             return
 
         if self._goal_flash > 0:
@@ -523,7 +781,11 @@ class FootballGame(arcade.Window):
             self._time_remaining = 0.0
             self._game_over = True
             self.ball.possessed_by = None
-            self._export_history()
+            match_df = self._build_match_df()
+            if match_df is not None:
+                self._export_history(match_df)
+                self._team_summary_df = match_stats.team_summary(match_df)
+                self._avg_positions_df = match_stats.avg_positions(match_df)
             return
 
         # 1. Tick all player timers
@@ -934,8 +1196,8 @@ class FootballGame(arcade.Window):
 
     # ── Analytics export ──────────────────────────────────────────────────────
 
-    def _export_history(self) -> None:
-        """Flatten _history into a Polars DataFrame and write to parquet.
+    def _build_match_df(self) -> pl.DataFrame | None:
+        """Flatten _history into a Polars DataFrame and return it.
 
         Each row represents one player at one frame.
 
@@ -947,10 +1209,8 @@ class FootballGame(arcade.Window):
         frame where team A always attacks right; for team A these are identical,
         while for team B they are the 180° rotation (W - x, H - y).
         """
-        import polars as pl
-
         if not self._history:
-            return
+            return None
 
         name_a = self.team_a_config.name
         name_b = self.team_b_config.name
@@ -1052,8 +1312,10 @@ class FootballGame(arcade.Window):
                     }
                 )
 
-        df = pl.DataFrame(rows)
+        return pl.DataFrame(rows)
 
+    def _export_history(self, df: pl.DataFrame) -> None:
+        """Write a match history DataFrame to a timestamped parquet file."""
         out_dir = Path("match_data")
         out_dir.mkdir(exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1068,15 +1330,11 @@ class FootballGame(arcade.Window):
 
 
 def main() -> None:
-    from miniball.ai import BaselineAI
+    from miniball.team_config import teams
 
     game = FootballGame(
-        team_a_config=TeamConfig(
-            name="Baseline model", ai=BaselineAI, human_controlled=True
-        ),
-        team_b_config=TeamConfig(
-            name="Baseline model 2", ai=BaselineAI, human_controlled=False
-        ),
+        team_a_config=teams[0],
+        team_b_config=teams[1],
     )
     game.run()
 
