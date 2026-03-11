@@ -3,14 +3,14 @@
 Can be driven by an arcade window (``FootballGame`` in ``game.py``) for the
 interactive game, or run headlessly for batch analysis and AI league matches::
 
-    sim = GameSimulation(team_a_config, team_b_config)
+    sim = MatchSimulation(team_a_config, team_b_config)
     dt = 1 / 60          # fixed time-step; runs as fast as the CPU allows
     while not sim.game_over:
         sim.step(dt)
     df = sim.build_match_df()
 
 Human input is injected through ``HumanInput`` objects passed to
-``GameSimulation.step()``.  Passing ``None`` (the default) produces a
+``MatchSimulation.step()``.  Passing ``None`` (the default) produces a
 fully AI-driven simulation.
 """
 
@@ -215,7 +215,7 @@ class Player:
 # ── Simulation ────────────────────────────────────────────────────────────────
 
 
-class GameSimulation:
+class MatchSimulation:
     """Self-contained match simulation with no arcade / rendering dependency.
 
     Parameters
@@ -738,3 +738,11 @@ class GameSimulation:
         print(
             f"Match data saved → {path}  ({len(self._history)} frames · {len(df)} rows)"
         )
+
+
+if __name__ == "__main__":
+    from miniball.teams import teams
+
+    sim = MatchSimulation(teams["Baseline (1-2-2)"], teams["Baseline (1-3-1)"])
+    df = sim.simulate_match()
+    sim.export_history()

@@ -69,9 +69,9 @@ def _run_match(home_team: Team, away_team: Team) -> MatchResult:
     worker to keep the fork payload small.
     """
     from miniball import match_stats
-    from miniball.simulation import GameSimulation
+    from miniball.match_simulation import MatchSimulation
 
-    sim = GameSimulation(home_team, away_team)
+    sim = MatchSimulation(home_team, away_team)
     df = sim.simulate_match()
     assert df is not None, "match DataFrame should be populated after game over"
     summary = match_stats.team_summary(df)

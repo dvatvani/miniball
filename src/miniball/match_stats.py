@@ -1,6 +1,6 @@
 """Post-match statistics derived from the frame-level history DataFrame.
 
-All functions accept the DataFrame produced by ``GameSimulation.build_match_df``
+All functions accept the DataFrame produced by ``MatchSimulation.build_match_df``
 and return tidy Polars DataFrames suitable for display or further analysis.
 
 Possession sessionisation
@@ -37,6 +37,7 @@ x = 120 reduces to simple linear extrapolation regardless of speed or drag.
 from __future__ import annotations
 
 import polars as pl
+
 from miniball.config import (
     GOAL_H,
     PITCH_B,
@@ -71,7 +72,7 @@ def strike_stats(df: pl.DataFrame) -> pl.DataFrame:
     Parameters
     ----------
     df:
-        Frame-level DataFrame produced by ``GameSimulation.build_match_df``.
+        Frame-level DataFrame produced by ``MatchSimulation.build_match_df``.
 
     Returns
     -------
@@ -292,7 +293,7 @@ def sessionise_possessions(df: pl.DataFrame) -> pl.DataFrame:
     Parameters
     ----------
     df:
-        Frame-level DataFrame produced by ``GameSimulation.build_match_df``.
+        Frame-level DataFrame produced by ``MatchSimulation.build_match_df``.
 
     Returns
     -------

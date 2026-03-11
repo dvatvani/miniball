@@ -62,7 +62,7 @@ from miniball.config import (
     TACKLE_COOLDOWN,
     TITLE,
 )
-from miniball.simulation import GameSimulation, HumanInput, Player
+from miniball.match_simulation import HumanInput, MatchSimulation, Player
 from miniball.teams import Team
 
 # ── Main window ───────────────────────────────────────────────────────────────
@@ -79,7 +79,7 @@ class FootballGame(arcade.Window):
         arcade.set_background_color((30, 30, 30, 255))
 
         # Core simulation (all physics, AI, history recording)
-        self.sim = GameSimulation(team_a_config, team_b_config)
+        self.sim = MatchSimulation(team_a_config, team_b_config)
 
         # Which team list the human player belongs to (None = fully AI game).
         # Index within that list of the currently controlled player (starts on GK = 0).
