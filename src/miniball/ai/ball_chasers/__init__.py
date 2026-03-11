@@ -1,4 +1,5 @@
-from miniball.ai.helpers import BaseAI, GameState, TeamActions
+from miniball.ai.interface import BaseAI, GameState, TeamActions
+from miniball.ai.utils import dist, goal_center, norm
 
 
 class BallChasersAI(BaseAI):
@@ -26,14 +27,14 @@ class BallChasersAI(BaseAI):
     HOME_DEADBAND: float = 2.0  # normalised units – don't move if already close to home
 
     def get_actions(self, state: GameState) -> TeamActions:
-        gx, gy = self._goal_center()
+        gx, gy = goal_center()
         ball_loc = state["ball"]["location"]
 
         teammate_has_ball = any(
             p["is_teammate"] and p["has_ball"] for p in state["team"]
         )
 
-        directions: dict[int, list[float]] = {}
+        directions: dict[int, tuple[float, float]] = {}
         ball_carrier_pid: int | None = None
         strike = False
 
@@ -43,27 +44,24 @@ class BallChasersAI(BaseAI):
 
             if p["has_ball"]:
                 # ── Dribble toward goal; strike when close enough ───────────
-                dx, dy = self._norm(gx - px, gy - py)
-                dist_to_goal = self._dist([px, py], [gx, gy])
-                directions[pid] = [dx, dy]
+                directions[pid] = norm(gx - px, gy - py)
+                dist_to_goal = dist([px, py], [gx, gy])
                 ball_carrier_pid = pid
                 strike = dist_to_goal < self.STRIKE_RANGE
 
             elif teammate_has_ball:
                 # ── Drift back to home position to open up space ───────────
                 formation_location = self.formation.get(pid, [px, py])
-                if self._dist([px, py], formation_location) > self.HOME_DEADBAND:
-                    dx, dy = self._norm(
+                if dist([px, py], formation_location) > self.HOME_DEADBAND:
+                    directions[pid] = norm(
                         formation_location[0] - px, formation_location[1] - py
                     )
-                    directions[pid] = [dx, dy]
                 else:
-                    directions[pid] = [0.0, 0.0]
+                    directions[pid] = (0.0, 0.0)
 
             else:
                 # ── Press toward the ball ──────────────────────────────────
-                dx, dy = self._norm(ball_loc[0] - px, ball_loc[1] - py)
-                directions[pid] = [dx, dy]
+                directions[pid] = norm(ball_loc[0] - px, ball_loc[1] - py)
 
         return {
             "actions": {

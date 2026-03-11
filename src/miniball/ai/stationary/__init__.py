@@ -1,4 +1,4 @@
-from miniball.ai.helpers import BaseAI, GameState, TeamActions
+from miniball.ai.interface import BaseAI, GameState, TeamActions
 
 
 class StationaryAI(BaseAI):
@@ -10,7 +10,7 @@ class StationaryAI(BaseAI):
     def get_actions(self, state: GameState) -> TeamActions:
         return {
             "actions": {
-                p["number"]: {"direction": [0.0, 0.0], "strike": False}
+                p["number"]: {"direction": (0.0, 0.0), "strike": False}
                 for p in state["team"]
             }
         }

@@ -427,7 +427,7 @@ class GameSimulation:
                 is_home=is_home_team,
             )
             actions["actions"][human_input.player_number] = {
-                "direction": [dx, dy],
+                "direction": (dx, dy),
                 "strike": human_input.strike,
             }
 
@@ -641,7 +641,7 @@ class GameSimulation:
             match_time = record.state["match_state"]["match_time_seconds"]
             t = record.game_time
 
-            _null_action: PlayerAction = {"direction": [0.0, 0.0], "strike": False}
+            _null_action: PlayerAction = {"direction": (0.0, 0.0), "strike": False}
             hp = record.human_player
 
             for player in record.state["team"]:  # team A – own frame = global

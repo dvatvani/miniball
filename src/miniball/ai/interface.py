@@ -1,4 +1,9 @@
-"""AI interface and built-in implementations for Miniball.
+"""AI interface contract for Miniball — TypedDicts and the abstract base class.
+
+This module defines the boundary between the game engine and any AI
+implementation.  It intentionally contains *no* gameplay logic: only the
+data structures (state / action schemas) and the abstract ``BaseAI`` class
+that every AI must subclass.
 
 Anatomy of an AI engine
 ────────────────────────
@@ -53,7 +58,7 @@ State schema
 Action schema
 ─────────────
     PlayerAction = {
-        "direction": [dx, dy],  # desired direction in standard pitch coords;
+        "direction": (dx, dy),  # desired direction in standard pitch coords;
                                 # magnitude used as speed fraction (0–1),
                                 # clipped to 1 if larger
         "strike":    bool,      # request to strike the ball; ignored if player has no ball
@@ -69,11 +74,8 @@ Action schema
 
 from __future__ import annotations
 
-import math
 from abc import ABC, abstractmethod
 from typing import TypedDict
-
-from miniball.config import STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
 
 # ── State TypedDicts ──────────────────────────────────────────────────────────
 
@@ -105,9 +107,9 @@ class GameState(TypedDict):
 
 
 class PlayerAction(TypedDict):
-    direction: list[
-        float
-    ]  # [dx, dy] in standard pitch coords; magnitude = speed fraction (0–1)
+    direction: tuple[
+        float, float
+    ]  # (dx, dy) in standard pitch coords; magnitude = speed fraction (0–1)
     strike: bool  # request to strike the ball; only meaningful for the player who has the ball
 
 
@@ -151,24 +153,3 @@ class BaseAI(ABC):
             still and do not strike.
         """
         ...
-
-    # ── Shared helpers ────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _goal_center() -> tuple[float, float]:
-        """Centre of the attacking goal (always the right goal in normalised view)."""
-        return STANDARD_PITCH_WIDTH, (STANDARD_PITCH_HEIGHT) / 2
-
-    @staticmethod
-    def _dist(a: list[float], b: list[float]) -> float:
-        return math.hypot(b[0] - a[0], b[1] - a[1])
-
-    @staticmethod
-    def _norm(dx: float, dy: float) -> tuple[float, float]:
-        d = math.hypot(dx, dy)
-        return (dx / d, dy / d) if d > 1e-6 else (0.0, 0.0)
-
-
-def nearest_player(player: PlayerState, players: list[PlayerState]) -> PlayerState:
-    """Return the nearest player to a given player from a list of players."""
-    return min(players, key=lambda p: BaseAI._dist(p["location"], player["location"]))

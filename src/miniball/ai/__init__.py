@@ -1,6 +1,6 @@
 from miniball.ai.ball_chasers import BallChasersAI
 from miniball.ai.baseline import BaselineAI
-from miniball.ai.helpers import (
+from miniball.ai.interface import (
     BallState,
     BaseAI,
     GameState,

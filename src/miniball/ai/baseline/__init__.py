@@ -1,7 +1,8 @@
 import numpy as np
 from scipy.spatial import Delaunay
 
-from miniball.ai.helpers import BaseAI, GameState, PlayerState, TeamActions
+from miniball.ai.interface import BaseAI, GameState, PlayerState, TeamActions
+from miniball.ai.utils import dist, goal_center, norm
 from miniball.config import STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
 
 
@@ -41,7 +42,7 @@ class BaselineAI(BaseAI):
     # ── Public interface ──────────────────────────────────────────────────────
 
     def get_actions(self, state: GameState) -> TeamActions:
-        gx, gy = self._goal_center()
+        gx, gy = goal_center()
         ball_loc = state["ball"]["location"]
         teammates = state["team"]
         opponents = state["opposition"]
@@ -49,7 +50,7 @@ class BaselineAI(BaseAI):
         ball_carrier = next((p for p in teammates if p["has_ball"]), None)
         team_has_ball = ball_carrier is not None
 
-        directions: dict[int, list[float]] = {}
+        directions: dict[int, tuple[float, float]] = {}
         strike = False
 
         if team_has_ball:
@@ -80,44 +81,41 @@ class BaselineAI(BaseAI):
         opponents: list[PlayerState],
         gx: float,
         gy: float,
-    ) -> tuple[dict[int, list[float]], bool]:
+    ) -> tuple[dict[int, tuple[float, float]], bool]:
         all_locs = [p["location"] for p in teammates + opponents]
         centroids = self._voronoi_centroids(all_locs)
 
-        directions: dict[int, list[float]] = {}
+        directions: dict[int, tuple[float, float]] = {}
         for i, p in enumerate(teammates):
             cx, cy = centroids[i]
             px, py = p["location"]
-            directions[p["number"]] = list(self._norm(cx - px, cy - py))
+            directions[p["number"]] = norm(cx - px, cy - py)
 
         bx, by = ball_carrier["location"]
         strike = False
 
-        if self._dist([bx, by], [gx, gy]) <= self.STRIKE_RANGE:
-            dx, dy = self._norm(gx - bx, gy - by)
-            directions[ball_carrier["number"]] = [dx, dy]
+        if dist([bx, by], [gx, gy]) <= self.STRIKE_RANGE:
+            directions[ball_carrier["number"]] = norm(gx - bx, gy - by)
             strike = True
         else:
             forward_target = self._delaunay_pass_target(
                 ball_carrier, teammates, opponents, min_x=bx
             )
             under_pressure = any(
-                self._dist(ball_carrier["location"], opp["location"])
-                <= self.PRESSURE_RANGE
+                dist(ball_carrier["location"], opp["location"]) <= self.PRESSURE_RANGE
                 for opp in opponents
             )
             if forward_target is not None:
                 tx, ty = forward_target["location"]
-                dx, dy = self._norm(tx - bx, ty - by)
-                directions[ball_carrier["number"]] = [dx, dy]
+                directions[ball_carrier["number"]] = norm(tx - bx, ty - by)
                 strike = True
             elif under_pressure:
                 nearest_opp = min(
                     opponents,
-                    key=lambda o: self._dist(ball_carrier["location"], o["location"]),
+                    key=lambda o: dist(ball_carrier["location"], o["location"]),
                 )
-                dy = -10.0 if nearest_opp["location"][1] > by else 10.0
-                directions[ball_carrier["number"]] = [10.0, dy]
+                escape_dy = -10.0 if nearest_opp["location"][1] > by else 10.0
+                directions[ball_carrier["number"]] = (10.0, escape_dy)
                 strike = True
 
         return directions, strike
@@ -129,15 +127,14 @@ class BaselineAI(BaseAI):
         teammates: list[PlayerState],
         opponents: list[PlayerState],
         ball_loc: list[float],
-    ) -> dict[int, list[float]]:
-        closest = min(teammates, key=lambda p: self._dist(p["location"], ball_loc))
+    ) -> dict[int, tuple[float, float]]:
+        closest = min(teammates, key=lambda p: dist(p["location"], ball_loc))
 
-        directions: dict[int, list[float]] = {}
+        directions: dict[int, tuple[float, float]] = {}
         for p in teammates:
             px, py = p["location"]
             if p["number"] == closest["number"]:
-                dx, dy = self._norm(ball_loc[0] - px, ball_loc[1] - py)
-                directions[p["number"]] = [dx, dy]
+                directions[p["number"]] = norm(ball_loc[0] - px, ball_loc[1] - py)
             else:
                 owned = self._zonal_opponents(p["number"], opponents)
                 if owned and p["number"] != 1:  # Prevent GK from marking anyone
@@ -148,12 +145,10 @@ class BaselineAI(BaseAI):
                     ty = ball_loc[1] + self.COVERAGE_FRACTION * (
                         target["location"][1] - ball_loc[1]
                     )
-                    dx, dy = self._norm(tx - px, ty - py)
-                    directions[p["number"]] = [dx, dy]
+                    directions[p["number"]] = norm(tx - px, ty - py)
                 else:
                     fp = self.formation.get(p["number"], [px, py])
-                    dx, dy = self._norm(fp[0] - px, fp[1] - py)
-                    directions[p["number"]] = [dx, dy]
+                    directions[p["number"]] = norm(fp[0] - px, fp[1] - py)
 
         return directions
 
@@ -201,7 +196,7 @@ class BaselineAI(BaseAI):
             for opp in opponents
             if min(
                 self.formation,
-                key=lambda num: self._dist(opp["location"], self.formation[num]),
+                key=lambda num: dist(opp["location"], self.formation[num]),
             )
             == player_number
         ]
