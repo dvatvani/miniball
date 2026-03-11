@@ -61,7 +61,7 @@ from miniball.coordinate_transformations import (
     team_delta_to_global,
     team_to_screen,
 )
-from miniball.team_config import TeamConfig
+from miniball.teams import Team
 
 # ── Public data types ─────────────────────────────────────────────────────────
 
@@ -227,8 +227,8 @@ class GameSimulation:
 
     def __init__(
         self,
-        team_a_config: TeamConfig,
-        team_b_config: TeamConfig,
+        team_a_config: Team,
+        team_b_config: Team,
     ) -> None:
         self.team_a_config = team_a_config
         self.team_b_config = team_b_config

@@ -60,7 +60,7 @@ from miniball.config import (
     TITLE,
 )
 from miniball.simulation import GameSimulation, HumanInput, Player
-from miniball.team_config import TeamConfig
+from miniball.teams import Team
 
 # ── Main window ───────────────────────────────────────────────────────────────
 
@@ -68,8 +68,8 @@ from miniball.team_config import TeamConfig
 class FootballGame(arcade.Window):
     def __init__(
         self,
-        team_a_config: TeamConfig,
-        team_b_config: TeamConfig,
+        team_a_config: Team,
+        team_b_config: Team,
         human_team: Literal["home", "away"] | None = None,
     ) -> None:
         super().__init__(SCREEN_W, SCREEN_H, TITLE)
@@ -715,10 +715,21 @@ class FootballGame(arcade.Window):
 def main() -> None:
     import questionary
 
-    from miniball.team_config import teams, teams_list
+    from miniball.teams import teams, teams_list
 
     team_names = [t.name for t in teams_list]
 
+    human_side = questionary.select(
+        "Control a player on a team with a controller (recommended) or keyboard?",
+        choices=["home", "away", "none (watch AI match)"],
+    ).ask()
+
+    if human_side in ("home", "away"):
+        print(f"You will control one player on the {human_side} team")
+        print(
+            "The controlled player can be changed in-game, but an AI needs to be "
+            "selected for your team's other players."
+        )
     home_name = questionary.select(
         "Home team AI (Starts with ball):",
         choices=team_names,
@@ -727,11 +738,6 @@ def main() -> None:
     away_name = questionary.select(
         "Away team AI:",
         choices=[n for n in team_names if n != home_name],
-    ).ask()
-
-    human_side = questionary.select(
-        "Control a player on a team with a controller (recommended) or keyboard?",
-        choices=["home", "away", "none (watch AI match)"],
     ).ask()
 
     human_team: Literal["home", "away"] | None = None

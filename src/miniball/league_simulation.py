@@ -62,7 +62,7 @@ def _run_match(home_name: str, away_name: str) -> MatchResult:
     """
     from miniball import match_stats
     from miniball.simulation import GameSimulation
-    from miniball.team_config import teams
+    from miniball.teams import teams
 
     sim = GameSimulation(teams[home_name], teams[away_name])
     while not sim.game_over:
@@ -218,7 +218,7 @@ def simulate_league(
     ----------
     team_names:
         Names of teams to include.  Must match keys in
-        ``miniball.team_config.teams``.  Defaults to all registered teams.
+        ``miniball.teams.teams``.  Defaults to all registered teams.
     n_workers:
         Number of worker processes.  Defaults to ``min(cpu_count, fixtures)``.
     show_progress:
@@ -230,7 +230,7 @@ def simulate_league(
         League table with columns:
         pos, team, played, won, drawn, lost, gf, ga, gd, pts, shots
     """
-    from miniball.team_config import teams, teams_list
+    from miniball.teams import teams, teams_list
 
     names = team_names if team_names is not None else [t.name for t in teams_list]
 
@@ -295,7 +295,7 @@ def _print_league_table(table: pl.DataFrame) -> None:
 if __name__ == "__main__":
     from rich.console import Console
 
-    from miniball.team_config import teams_list
+    from miniball.teams import teams_list
 
     console = Console()
 

@@ -7,27 +7,27 @@ from miniball.config import STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
 
 
 @dataclass
-class PlayerConfig:
+class Player:
     name: str
     number: int
     x: float  # normalised pitch coords: 0 = left, STANDARD_PITCH_WIDTH = right
     y: float  # normalised pitch coords: 0 = bottom, STANDARD_PITCH_HEIGHT = top
 
 
-DEFAULT_PLAYERS: list[PlayerConfig] = [
-    PlayerConfig(name="GK", number=1, x=5, y=40),
-    PlayerConfig(name="Defender 1", number=2, x=50, y=60),
-    PlayerConfig(name="Defender 2", number=3, x=50, y=20),
-    PlayerConfig(name="Forward 1", number=4, x=100, y=50),
-    PlayerConfig(name="Forward 2", number=5, x=100, y=30),
+DEFAULT_PLAYERS: list[Player] = [
+    Player(name="GK", number=1, x=5, y=40),
+    Player(name="Defender 1", number=2, x=50, y=60),
+    Player(name="Defender 2", number=3, x=50, y=20),
+    Player(name="Forward 1", number=4, x=100, y=50),
+    Player(name="Forward 2", number=5, x=100, y=30),
 ]
 
 
-class TeamConfig:
+class Team:
     def __init__(
         self,
         name: str,
-        players: list[PlayerConfig] | None = None,
+        players: list[Player] | None = None,
         ai: type[BaseAI] = StationaryAI,
     ) -> None:
         self.name = name
@@ -35,8 +35,8 @@ class TeamConfig:
         formation = {p.number: [p.x, p.y] for p in self.players}
         self.ai = ai(formation=formation)
         assert len(self.players) == 5, "Team must have 5 players"
-        assert all(isinstance(p, PlayerConfig) for p in self.players), (
-            "Players must be of type PlayerConfig"
+        assert all(isinstance(p, Player) for p in self.players), (
+            "Players must be of type Player"
         )
         assert all(p.name is not None for p in self.players), "Players must have a name"
         assert all(p.number is not None for p in self.players), (
@@ -60,40 +60,40 @@ class TeamConfig:
 
 
 teams_list = [
-    TeamConfig(name="Baseline (1-2-2)", ai=BaselineAI),
-    TeamConfig(
+    Team(name="Baseline (1-2-2)", ai=BaselineAI),
+    Team(
         name="Baseline (1-3-1)",
         ai=BaselineAI,
         players=[
-            PlayerConfig(name="GK", number=1, x=5, y=40),
-            PlayerConfig(name="Defender 1", number=2, x=40, y=60),
-            PlayerConfig(name="Defender 2", number=3, x=30, y=40),
-            PlayerConfig(name="Defender 3", number=4, x=40, y=20),
-            PlayerConfig(name="Forward 1", number=5, x=105, y=40),
+            Player(name="GK", number=1, x=5, y=40),
+            Player(name="Defender 1", number=2, x=40, y=60),
+            Player(name="Defender 2", number=3, x=30, y=40),
+            Player(name="Defender 3", number=4, x=40, y=20),
+            Player(name="Forward 1", number=5, x=105, y=40),
         ],
     ),
-    TeamConfig(
+    Team(
         name="Baseline (1-1-3)",
         ai=BaselineAI,
         players=[
-            PlayerConfig(name="GK", number=1, x=5, y=40),
-            PlayerConfig(name="Defender 1", number=2, x=40, y=40),
-            PlayerConfig(name="Forward 1", number=3, x=100, y=40),
-            PlayerConfig(name="Forward 2", number=4, x=105, y=60),
-            PlayerConfig(name="Forward 3", number=5, x=105, y=20),
+            Player(name="GK", number=1, x=5, y=40),
+            Player(name="Defender 1", number=2, x=40, y=40),
+            Player(name="Forward 1", number=3, x=100, y=40),
+            Player(name="Forward 2", number=4, x=105, y=60),
+            Player(name="Forward 3", number=5, x=105, y=20),
         ],
     ),
-    TeamConfig(name="Ball Chasers", ai=BallChasersAI),
-    TeamConfig(name="Stationary", ai=StationaryAI),
-    TeamConfig(
+    Team(name="Ball Chasers", ai=BallChasersAI),
+    Team(name="Stationary", ai=StationaryAI),
+    Team(
         name="Static Defensive",
         ai=StationaryAI,
         players=[
-            PlayerConfig(name="GK", number=1, x=5, y=40),
-            PlayerConfig(name="Defender 1", number=2, x=15, y=55),
-            PlayerConfig(name="Defender 2", number=3, x=15, y=45),
-            PlayerConfig(name="Defender 3", number=4, x=15, y=35),
-            PlayerConfig(name="Defender 4", number=5, x=15, y=25),
+            Player(name="GK", number=1, x=5, y=40),
+            Player(name="Defender 1", number=2, x=15, y=55),
+            Player(name="Defender 2", number=3, x=15, y=45),
+            Player(name="Defender 3", number=4, x=15, y=35),
+            Player(name="Defender 4", number=5, x=15, y=25),
         ],
     ),
 ]
