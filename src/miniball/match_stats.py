@@ -12,11 +12,38 @@ bridged automatically because those frames simply don't appear in the filtered
 dataset.
 
 Call ``possession_stats`` on the output to obtain aggregated per-team metrics.
+
+Strike classification
+─────────────────────
+``strike_stats`` classifies each strike event as a **shot** or a **pass**:
+
+* **Shot** — struck from the attacking half (team-frame x > 60) with a
+  trajectory that would cross the goal line (x = 120) within *twice* the goal
+  height.  This intentionally includes near-misses so that all genuine attempts
+  on goal are captured regardless of accuracy.
+* **Pass attempt** — any strike that is not a shot.
+
+Each category is further refined:
+
+* **Shot on target** — trajectory crosses within the actual goal bounds.
+* **Successful pass** — the next player to gain possession after the strike
+  is a teammate of the striker.
+
+Because ball drag is isotropic (identical drag on ``vx`` and ``vy``), the
+direction of travel is perfectly preserved over time, so the y-intercept at
+x = 120 reduces to simple linear extrapolation regardless of speed or drag.
 """
 
 from __future__ import annotations
 
 import polars as pl
+from miniball.config import (
+    GOAL_H,
+    PITCH_B,
+    PITCH_T,
+    STANDARD_PITCH_HEIGHT,
+    STANDARD_PITCH_WIDTH,
+)
 
 
 def avg_positions(df: pl.DataFrame) -> pl.DataFrame:
@@ -38,42 +65,218 @@ def avg_positions(df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def strike_stats(df: pl.DataFrame) -> pl.DataFrame:
+    """Classify every strike as a shot or a pass and aggregate per-team stats.
+
+    Parameters
+    ----------
+    df:
+        Frame-level DataFrame produced by ``GameSimulation._build_match_df``.
+
+    Returns
+    -------
+    pl.DataFrame
+        One row per team with columns:
+
+        team, is_home,
+        passes, passes_completed, pass_accuracy (0–100 %),
+        shots, shots_on_target, shot_accuracy (0–100 %)
+
+    Notes
+    -----
+    All coordinates are in **team perspective** (team always attacks right,
+    goal at x = 120).  The ``ball_x``/``ball_y`` and ``action_dx``/``action_dy``
+    columns in the history DataFrame already carry this convention.
+    """
+    pitch_h_px: float = PITCH_T - PITCH_B
+    goal_half_h = (GOAL_H / 2) * STANDARD_PITCH_HEIGHT / pitch_h_px
+    goal_center_y = STANDARD_PITCH_HEIGHT / 2  # 40.0
+    goal_lo = goal_center_y - goal_half_h
+    goal_hi = goal_center_y + goal_half_h
+    shot_y_lo = goal_center_y - 2 * goal_half_h
+    shot_y_hi = goal_center_y + 2 * goal_half_h
+    pitch_mid = STANDARD_PITCH_WIDTH / 2  # 60.0
+
+    _empty_schema: dict[str, type[pl.DataType]] = {
+        "team": pl.String,
+        "is_home": pl.Boolean,
+        "passes": pl.Int32,
+        "passes_completed": pl.Int32,
+        "pass_accuracy": pl.Float64,
+        "shots": pl.Int32,
+        "shots_on_target": pl.Int32,
+        "shot_accuracy": pl.Float64,
+    }
+
+    # ── Extract one row per strike event ──────────────────────────────────────
+    events = (
+        df.filter(pl.col("strike") & pl.col("has_ball"))
+        .select(
+            [
+                "frame_number",
+                "team",
+                "is_home",
+                "ball_x",
+                "ball_y",
+                "action_dx",
+                "action_dy",
+            ]
+        )
+        .sort("frame_number")
+    )
+
+    if events.is_empty():
+        return pl.DataFrame(schema=_empty_schema)
+
+    # ── Shot / pass classification ─────────────────────────────────────────────
+    # Because drag acts identically on vx and vy the ball travels in a straight
+    # line, so the y-intercept at the goal line is purely linear.
+    events = (
+        events.with_columns(
+            pl.when(pl.col("action_dx") > 1e-6)
+            .then(
+                pl.col("ball_y")
+                + (pl.col("action_dy") / pl.col("action_dx"))
+                * (STANDARD_PITCH_WIDTH - pl.col("ball_x"))
+            )
+            .otherwise(None)
+            .alias("y_at_goal"),
+        )
+        .with_columns(
+            (
+                (pl.col("ball_x") > pitch_mid)
+                & (pl.col("action_dx") > 1e-6)
+                & pl.col("y_at_goal").is_not_null()
+                & (pl.col("y_at_goal") >= shot_y_lo)
+                & (pl.col("y_at_goal") <= shot_y_hi)
+            ).alias("is_shot"),
+        )
+        .with_columns(
+            (
+                pl.col("is_shot")
+                & (pl.col("y_at_goal") >= goal_lo)
+                & (pl.col("y_at_goal") <= goal_hi)
+            ).alias("is_shot_on_target"),
+            (~pl.col("is_shot")).alias("is_pass"),
+        )
+    )
+
+    # ── Pass success: next player to gain possession is a teammate ─────────────
+    # Build a lookup table: for each frame number, which team gains possession?
+    next_possession = (
+        df.filter(pl.col("has_ball"))
+        .select(["frame_number", "team"])
+        .unique(subset=["frame_number"])
+        .sort("frame_number")
+        .rename({"frame_number": "next_frame", "team": "next_team"})
+    )
+
+    # For each strike at frame F, find the first possession at frame > F.
+    # join_asof(strategy="forward") finds the nearest next_frame >= lookup key.
+    # Using frame_number + 1 as the key skips possession by the striker themselves
+    # on the same frame.
+    events = (
+        events.with_columns((pl.col("frame_number") + 1).alias("next_frame"))
+        .join_asof(next_possession, on="next_frame", strategy="forward")
+        .with_columns(
+            (
+                pl.col("is_pass")
+                & pl.col("next_team").is_not_null()
+                & (pl.col("next_team") == pl.col("team"))
+            ).alias("is_pass_successful"),
+        )
+    )
+
+    # ── Aggregate ─────────────────────────────────────────────────────────────
+    return (
+        events.group_by(["team", "is_home"])
+        .agg(
+            pl.col("is_pass").sum().alias("passes"),
+            pl.col("is_pass_successful").sum().alias("passes_completed"),
+            pl.col("is_shot").sum().alias("shots"),
+            pl.col("is_shot_on_target").sum().alias("shots_on_target"),
+        )
+        .with_columns(
+            pl.when(pl.col("passes") > 0)
+            .then((pl.col("passes_completed") / pl.col("passes") * 100).round(1))
+            .otherwise(0.0)
+            .alias("pass_accuracy"),
+            pl.when(pl.col("shots") > 0)
+            .then((pl.col("shots_on_target") / pl.col("shots") * 100).round(1))
+            .otherwise(0.0)
+            .alias("shot_accuracy"),
+        )
+        .sort("is_home", descending=True)
+    )
+
+
 def team_summary(df: pl.DataFrame) -> pl.DataFrame:
     """Return high-level per-team match statistics.
 
     Columns
     -------
-    team, is_home, goals, goals_against, strikes,
+    team, is_home, goals, goals_against,
+    passes, passes_completed, pass_accuracy,
+    shots, shots_on_target, shot_accuracy, shot_conversion_rate,
     possession_pct, possession_count, avg_duration
 
     Notes
     -----
-    ``strikes`` counts frames where a player had the ball and requested a strike.
-    Because the ball is released the same frame a shot fires, this reliably
-    gives one count per shot event.
-
     ``possession_pct`` is derived from ``possession_stats(sessionise_possessions(df))``
     and represents each team's share of total possessed time (sums to 100 %).
     ``possession_count`` and ``avg_duration`` (seconds) come from the same source.
+
+    ``shot_conversion_rate`` is ``goals / shots * 100`` (0–100 %).
+    ``pass_accuracy`` and ``shot_accuracy`` are also expressed as 0–100 %.
     """
     base = (
         df.group_by(["team", "is_home"])
         .agg(
             pl.col("team_score").max().alias("goals"),
             pl.col("opposition_score").max().alias("goals_against"),
-            (pl.col("strike") & pl.col("has_ball")).sum().alias("strikes"),
         )
         .sort("is_home", descending=True)
     )
 
     poss = possession_stats(sessionise_possessions(df))
+    strikes = strike_stats(df)
 
-    return base.join(
-        poss.select(
-            ["team", "is_home", "possession_pct", "possession_count", "avg_duration"]
-        ),
-        on=["team", "is_home"],
-        how="left",
+    return (
+        base.join(
+            poss.select(
+                [
+                    "team",
+                    "is_home",
+                    "possession_pct",
+                    "possession_count",
+                    "avg_duration",
+                ]
+            ),
+            on=["team", "is_home"],
+            how="left",
+        )
+        .join(
+            strikes.select(
+                [
+                    "team",
+                    "is_home",
+                    "passes",
+                    "passes_completed",
+                    "pass_accuracy",
+                    "shots",
+                    "shots_on_target",
+                    "shot_accuracy",
+                ]
+            ),
+            on=["team", "is_home"],
+            how="left",
+        )
+        .with_columns(
+            pl.when(pl.col("shots") > 0)
+            .then((pl.col("goals") / pl.col("shots") * 100).round(1))
+            .otherwise(0.0)
+            .alias("shot_conversion_rate"),
+        )
     )
 
 

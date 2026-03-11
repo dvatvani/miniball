@@ -434,7 +434,31 @@ class FootballGame(arcade.Window):
 
         stat_rows: list[tuple[str, float, float, str]] = [
             ("Goals", _fval(home["goals"]), _fval(away["goals"]), "{:.0f}"),
-            ("Strikes", _fval(home["strikes"]), _fval(away["strikes"]), "{:.0f}"),
+            (
+                "Shots on target",
+                _fval(home["shots_on_target"]),
+                _fval(away["shots_on_target"]),
+                "{:.0f}",
+            ),
+            ("Shots", _fval(home["shots"]), _fval(away["shots"]), "{:.0f}"),
+            (
+                "Shot conversion",
+                _fval(home["shot_conversion_rate"]),
+                _fval(away["shot_conversion_rate"]),
+                "{:.1f}%",
+            ),
+            (
+                "Passes completed",
+                _fval(home["passes_completed"]),
+                _fval(away["passes_completed"]),
+                "{:.0f}",
+            ),
+            (
+                "Pass accuracy",
+                _fval(home["pass_accuracy"]),
+                _fval(away["pass_accuracy"]),
+                "{:.1f}%",
+            ),
             (
                 "Possession",
                 _fval(home["possession_pct"]),
