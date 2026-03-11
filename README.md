@@ -54,9 +54,9 @@ Run tasks with `just <recipe>`. All commands are defined in-place in `justfile`.
 - `tests` — Run pytest and remove `__pycache__`/`.pyc` files.
 - `type-check` — Run type checking with [ty](https://github.com/astral-sh/ty).
 
-## Marimo playground
+## Marimo notebooks
 
-The Marimo notebook can be run locally using the following command:
+The Marimo notebooks can be run locally using the following command:
 
 ```bash
 uv run marimo edit

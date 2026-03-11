@@ -4,7 +4,7 @@
 This is a Python package laid out with a `src/`-based import path and supporting tooling.
 - `src/miniball/` contains the package code (for example `src/miniball/main.py`).
 - `tests/` holds the test suite collected by pytest.
-- `playground/` contains Marimo notebooks.
+- `notebooks/` contains Marimo notebooks.
 - `pyproject.toml` and `justfile` define tooling, dependencies, and tasks.
 
 ## Build, Test, and Development Commands
@@ -15,7 +15,7 @@ Use `uv` for dependency management and to run tools. Run tasks with `just <recip
 - `just type-check` runs `ty` for type checking.
 - `just tests` runs `uv run pytest -v` and cleans `__pycache__` files.
 - `just build` builds the project.
-- `uv run marimo edit` opens the Marimo notebook editor in `playground/`.
+- `uv run marimo edit` opens the Marimo notebook editor in `notebooks/`.
 
 ## Coding Style & Naming Conventions
 Follow standard Python conventions.
