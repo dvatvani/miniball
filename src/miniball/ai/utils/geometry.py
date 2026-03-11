@@ -76,7 +76,7 @@ def centroid_region(vertices):
     A = 0.5 * A
     C_x = (1.0 / (6.0 * A)) * C_x
     C_y = (1.0 / (6.0 * A)) * C_y
-    return np.array([[C_x, C_y]])
+    return np.array([C_x, C_y])
 
 
 def location_in_polygon(location: Sequence[float], polygon: np.ndarray) -> bool:
@@ -123,5 +123,5 @@ def plot_bounded_voronoi(vor: SimpleNamespace, plot_centroids: bool = True):
         )
     if plot_centroids:
         for centroid in vor.region_centroids:
-            ax.plot(centroid[:, 0], centroid[:, 1], "r.")
+            ax.plot(centroid[0], centroid[1], "r.")
     return fig

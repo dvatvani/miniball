@@ -1,42 +1,45 @@
+from collections.abc import Sequence
+
 import numpy as np
-from scipy.spatial import Delaunay
 
 from miniball.ai.interface import BaseAI, GameState, PlayerState, TeamActions
 from miniball.ai.utils import dist, goal_center, norm
-from miniball.config import STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
+from miniball.ai.utils.geometry import players_bounded_voronoi, players_in_polygon
 
 
 class BaselineAI(BaseAI):
-    """Zonal AI using Voronoi space creation and Delaunay-based passing.
+    """AI that uses Voronoi space creation and passing-lane checks.
 
     In possession
     ─────────────
     All players move toward the centroid of their Voronoi cell (computed from
-    all ten players' current positions) to spread out and create space.
+    all ten players' current positions) to spread out and attempt to create space.
 
     The ball carrier's decision overrides the space-creation movement:
 
     1. Within ``STRIKE_RANGE`` of the attacking goal → face goal and strike.
-    2. An opponent within ``PRESSURE_RANGE`` → pass to the furthest-forward
-       teammate connected to the carrier by a Delaunay edge.  If no such
-       teammate exists, strike toward goal instead.
-    3. Otherwise → continue moving toward own Voronoi centroid.
+    2. A forward teammate exists with a clear passing lane (no opponent inside
+       the triangular corridor defined by ``PASSING_LANE_ANGLE``) → pass to
+       the most forward such teammate.
+    3. An opponent within ``PRESSURE_RANGE`` and no clear forward pass →
+       diagonal escape strike (clearance).
+    4. Otherwise → continue moving toward own Voronoi centroid to create space.
 
     Out of possession
     ─────────────────
     1. The teammate nearest to the ball presses immediately.
-    2. Every other player is assigned a *zone* defined by which formation
-       position (from ``self.formation``) is closest to a given pitch location
-       (i.e. the Voronoi diagram of the formation positions).
+    2. Every other player is assigned a Zonal marking zone based on the Voronoi
+    regions from the team formation positions.
     3. If an opponent currently occupies a player's zone, that player moves to
        the point 90 % of the way along the line from the ball to the most
-       forward (lowest x) opponent in the zone – cutting off the threat.
+       forward (lowest x) opponent in the zone to cut off the pass lane.
     4. If the zone is empty, the player returns to their formation position.
     """
 
     STRIKE_RANGE: float = 40.0
     PRESSURE_RANGE: float = 10.0
     COVERAGE_FRACTION: float = 0.9
+    PASSING_LANE_ANGLE: float = np.radians(20)  # half-cone angle for pass lane check
     _VORONOI_GRID_STEP: float = 5.0  # pitch units between grid sample points
 
     # ── Public interface ──────────────────────────────────────────────────────
@@ -82,8 +85,9 @@ class BaselineAI(BaseAI):
         gx: float,
         gy: float,
     ) -> tuple[dict[int, tuple[float, float]], bool]:
-        all_locs = [p["location"] for p in teammates + opponents]
-        centroids = self._voronoi_centroids(all_locs)
+        players = teammates + opponents
+        vor = players_bounded_voronoi(players)
+        centroids = vor.region_centroids
 
         directions: dict[int, tuple[float, float]] = {}
         for i, p in enumerate(teammates):
@@ -98,7 +102,7 @@ class BaselineAI(BaseAI):
             directions[ball_carrier["number"]] = norm(gx - bx, gy - by)
             strike = True
         else:
-            forward_target = self._delaunay_pass_target(
+            forward_target = self._passing_lane_pass_target(
                 ball_carrier, teammates, opponents, min_x=bx
             )
             under_pressure = any(
@@ -154,37 +158,6 @@ class BaselineAI(BaseAI):
 
     # ── Geometry utilities ────────────────────────────────────────────────────
 
-    def _voronoi_centroids(self, locations: list[list[float]]) -> list[list[float]]:
-        """Approximate the centroid of each player's Voronoi cell via grid sampling."""
-        W, H = STANDARD_PITCH_WIDTH, STANDARD_PITCH_HEIGHT
-        step = self._VORONOI_GRID_STEP
-        n = len(locations)
-        sum_x = [0.0] * n
-        sum_y = [0.0] * n
-        count = [0] * n
-
-        gx = 0.0
-        while gx <= W:
-            gy = 0.0
-            while gy <= H:
-                best, best_d2 = 0, float("inf")
-                for i, loc in enumerate(locations):
-                    d2 = (gx - loc[0]) ** 2 + (gy - loc[1]) ** 2
-                    if d2 < best_d2:
-                        best_d2, best = d2, i
-                sum_x[best] += gx
-                sum_y[best] += gy
-                count[best] += 1
-                gy += step
-            gx += step
-
-        return [
-            [sum_x[i] / count[i], sum_y[i] / count[i]]
-            if count[i] > 0
-            else list(locations[i])
-            for i in range(n)
-        ]
-
     def _zonal_opponents(
         self, player_number: int, opponents: list[PlayerState]
     ) -> list[PlayerState]:
@@ -201,59 +174,76 @@ class BaselineAI(BaseAI):
             == player_number
         ]
 
-    def _delaunay_pass_target(
+    def _build_passing_lane_polygon(
+        self,
+        start: Sequence[float],
+        end: Sequence[float],
+        angle: float,
+    ) -> np.ndarray:
+        """Build a triangular passing-lane polygon.
+
+        Returns a ``(3, 2)`` array representing triangle **ABC** where:
+
+        * **A** is ``start``
+        * the midpoint of **BC** is ``end``
+        * the angle ∠BAC equals ``angle`` (radians)
+
+        The triangle opens from the passer toward the target, so any player
+        inside it lies within the corridor between the two points.
+        """
+        sx, sy = float(start[0]), float(start[1])
+        ex, ey = float(end[0]), float(end[1])
+        dx, dy = ex - sx, ey - sy
+        length = np.hypot(dx, dy)
+        if length == 0.0:
+            return np.array([[sx, sy], [ex, ey], [ex, ey]])
+
+        # Unit vector perpendicular to the pass direction
+        px, py = -dy / length, dx / length
+        half_width = length * np.tan(angle / 2.0)
+
+        A = np.array([sx, sy])
+        B = np.array([ex + px * half_width, ey + py * half_width])
+        C = np.array([ex - px * half_width, ey - py * half_width])
+        return np.array([A, B, C])
+
+    def _passing_lane_pass_target(
         self,
         carrier: PlayerState,
         teammates: list[PlayerState],
         opponents: list[PlayerState],
         min_x: float | None = None,
     ) -> PlayerState | None:
-        """Return the furthest-forward teammate connected to the carrier by a Delaunay edge.
+        """Return the furthest-forward teammate reachable via a clear passing lane.
 
-        All ten players are triangulated together so the Delaunay graph reflects
-        actual on-pitch proximity rather than a teammates-only subgraph.
+        For each forward teammate a triangular corridor is built with
+        ``_build_passing_lane_polygon``.  A lane is *clear* when no opponent
+        falls inside it.  The most forward teammate with a clear lane is
+        returned, or ``None`` if no clear lane exists.
 
         Parameters
         ----------
         min_x:
-            When provided, only teammates with x > ``min_x`` are considered.
+            When provided, only teammates with ``x > min_x`` are considered.
             Pass the carrier's x to restrict to players further forward.
         """
-        all_players = teammates + opponents
-        if len(all_players) < 3:
-            return None
-
-        points = np.array([p["location"] for p in all_players], dtype=float)
-        try:
-            tri = Delaunay(points)
-        except Exception:
-            return None
-
-        carrier_idx = next(
-            (
-                i
-                for i, p in enumerate(all_players)
-                if p["is_teammate"] and p["number"] == carrier["number"]
-            ),
-            None,
-        )
-        if carrier_idx is None:
-            return None
-
-        neighbours: set[int] = set()
-        for simplex in tri.simplices:
-            if carrier_idx in simplex:
-                neighbours.update(simplex)
-        neighbours.discard(carrier_idx)
-
-        connected_teammates = [
-            all_players[i]
-            for i in neighbours
-            if all_players[i]["is_teammate"]
-            and all_players[i]["number"] != carrier["number"]
-            and (min_x is None or all_players[i]["location"][0] > min_x)
+        candidates = [
+            t
+            for t in teammates
+            if t["number"] != carrier["number"]
+            and (min_x is None or t["location"][0] > min_x)
         ]
-        if not connected_teammates:
+        if not candidates:
             return None
 
-        return max(connected_teammates, key=lambda p: p["location"][0])
+        # Evaluate most-forward candidates first for an early exit
+        candidates.sort(key=lambda p: p["location"][0], reverse=True)
+
+        for target in candidates:
+            polygon = self._build_passing_lane_polygon(
+                carrier["location"], target["location"], self.PASSING_LANE_ANGLE
+            )
+            if not players_in_polygon(opponents, polygon):
+                return target
+
+        return None

@@ -6,7 +6,10 @@ app = marimo.App(width="wide")
 
 @app.cell
 def _():
-    from miniball.ai.utils.geometry import players_bounded_voronoi, plot_bounded_voronoi
+    from miniball.ai.utils.geometry import (
+        players_bounded_voronoi,
+        plot_bounded_voronoi,
+    )
     from miniball.teams import teams_list
 
     return players_bounded_voronoi, plot_bounded_voronoi, teams_list
@@ -33,8 +36,14 @@ def _(teams_list):
 
 
 @app.cell
-def _(players, players_bounded_voronoi, plot_bounded_voronoi):
+def _(players, players_bounded_voronoi):
     vor = players_bounded_voronoi(players)
+    vor.points, vor.region_centroids, vor.regions
+    return (vor,)
+
+
+@app.cell
+def _(plot_bounded_voronoi, vor):
     plot_bounded_voronoi(vor)
     return
 
