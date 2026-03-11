@@ -8,18 +8,17 @@ from miniball.config import STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
 
 @dataclass
 class Player:
-    name: str
     number: int
     x: float  # normalised pitch coords: 0 = left, STANDARD_PITCH_WIDTH = right
     y: float  # normalised pitch coords: 0 = bottom, STANDARD_PITCH_HEIGHT = top
 
 
 DEFAULT_PLAYERS: list[Player] = [
-    Player(name="GK", number=1, x=5, y=40),
-    Player(name="Defender 1", number=2, x=50, y=60),
-    Player(name="Defender 2", number=3, x=50, y=20),
-    Player(name="Forward 1", number=4, x=100, y=50),
-    Player(name="Forward 2", number=5, x=100, y=30),
+    Player(number=1, x=5, y=40),
+    Player(number=2, x=50, y=60),
+    Player(number=3, x=50, y=20),
+    Player(number=4, x=100, y=50),
+    Player(number=5, x=100, y=30),
 ]
 
 
@@ -38,7 +37,6 @@ class Team:
         assert all(isinstance(p, Player) for p in self.players), (
             "Players must be of type Player"
         )
-        assert all(p.name is not None for p in self.players), "Players must have a name"
         assert all(p.number is not None for p in self.players), (
             "Players must have a number"
         )
@@ -65,22 +63,22 @@ teams_list = [
         name="Baseline (1-3-1)",
         ai=BaselineAI,
         players=[
-            Player(name="GK", number=1, x=5, y=40),
-            Player(name="Defender 1", number=2, x=40, y=60),
-            Player(name="Defender 2", number=3, x=30, y=40),
-            Player(name="Defender 3", number=4, x=40, y=20),
-            Player(name="Forward 1", number=5, x=105, y=40),
+            Player(number=1, x=5, y=40),
+            Player(number=2, x=40, y=60),
+            Player(number=3, x=30, y=40),
+            Player(number=4, x=40, y=20),
+            Player(number=5, x=105, y=40),
         ],
     ),
     Team(
         name="Baseline (1-1-3)",
         ai=BaselineAI,
         players=[
-            Player(name="GK", number=1, x=5, y=40),
-            Player(name="Defender 1", number=2, x=40, y=40),
-            Player(name="Forward 1", number=3, x=100, y=40),
-            Player(name="Forward 2", number=4, x=105, y=60),
-            Player(name="Forward 3", number=5, x=105, y=20),
+            Player(number=1, x=5, y=40),
+            Player(number=2, x=40, y=40),
+            Player(number=3, x=100, y=40),
+            Player(number=4, x=105, y=60),
+            Player(number=5, x=105, y=20),
         ],
     ),
     Team(name="Ball Chasers", ai=BallChasersAI),
@@ -89,11 +87,11 @@ teams_list = [
         name="Static Defensive",
         ai=StationaryAI,
         players=[
-            Player(name="GK", number=1, x=5, y=40),
-            Player(name="Defender 1", number=2, x=15, y=55),
-            Player(name="Defender 2", number=3, x=15, y=45),
-            Player(name="Defender 3", number=4, x=15, y=35),
-            Player(name="Defender 4", number=5, x=15, y=25),
+            Player(number=1, x=5, y=40),
+            Player(number=2, x=15, y=55),
+            Player(number=3, x=15, y=45),
+            Player(number=4, x=15, y=35),
+            Player(number=5, x=15, y=25),
         ],
     ),
 ]
