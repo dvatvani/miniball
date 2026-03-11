@@ -47,8 +47,6 @@ class MatchResult:
     away_team: str
     home_goals: int
     away_goals: int
-    home_shots: int
-    away_shots: int
 
 
 # ── Worker function (must be module-level for multiprocessing pickling) ───────
@@ -79,8 +77,6 @@ def _run_match(home_name: str, away_name: str) -> MatchResult:
         away_team=away_name,
         home_goals=int(home_row["goals"]),
         away_goals=int(away_row["goals"]),
-        home_shots=int(home_row["shots"]),
-        away_shots=int(away_row["shots"]),
     )
 
 
@@ -132,7 +128,7 @@ def simulate_fixtures(
 def build_league_table(results: list[MatchResult]) -> pl.DataFrame:
     """Aggregate a list of match results into a standard league table.
 
-    Columns: pos, team, played, won, drawn, lost, gf, ga, gd, pts, shots
+    Columns: pos, team, played, won, drawn, lost, gf, ga, gd, pts
 
     Rows are sorted by pts → gd → gf (descending).
     """
@@ -151,7 +147,6 @@ def build_league_table(results: list[MatchResult]) -> pl.DataFrame:
                 "lost": int(away_win),
                 "gf": r.home_goals,
                 "ga": r.away_goals,
-                "shots": r.home_shots,
             }
         )
         rows.append(
@@ -163,7 +158,6 @@ def build_league_table(results: list[MatchResult]) -> pl.DataFrame:
                 "lost": int(home_win),
                 "gf": r.away_goals,
                 "ga": r.home_goals,
-                "shots": r.away_shots,
             }
         )
 
@@ -177,7 +171,6 @@ def build_league_table(results: list[MatchResult]) -> pl.DataFrame:
             pl.col("lost").sum(),
             pl.col("gf").sum(),
             pl.col("ga").sum(),
-            pl.col("shots").sum(),
         )
         .with_columns(
             (pl.col("gf") - pl.col("ga")).alias("gd"),
@@ -197,7 +190,6 @@ def build_league_table(results: list[MatchResult]) -> pl.DataFrame:
                 "ga",
                 "gd",
                 "pts",
-                "shots",
             ]
         )
     )
@@ -228,7 +220,7 @@ def simulate_league(
     -------
     pl.DataFrame
         League table with columns:
-        pos, team, played, won, drawn, lost, gf, ga, gd, pts, shots
+        pos, team, played, won, drawn, lost, gf, ga, gd, pts
     """
     from miniball.teams import teams, teams_list
 
@@ -270,7 +262,6 @@ def _print_league_table(table: pl.DataFrame) -> None:
     rt.add_column("GA", justify="right")
     rt.add_column("GD", justify="right")
     rt.add_column("Pts", justify="right", style="bold magenta")
-    rt.add_column("Shots", justify="right")
 
     for row in table.iter_rows(named=True):
         gd = row["gd"]
@@ -286,7 +277,6 @@ def _print_league_table(table: pl.DataFrame) -> None:
             str(row["ga"]),
             gd_str,
             str(row["pts"]),
-            str(row["shots"]),
         )
 
     Console().print(rt)

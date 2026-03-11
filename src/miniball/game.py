@@ -11,7 +11,7 @@ Possession model
   possessor's body steals possession immediately.
 • The player who lost the ball is frozen for STUN_DURATION seconds
   (orange ring) and cannot gain possession while stunned.
-• The controlled player shoots with Space / gamepad button A: the ball is
+• The controlled player strikes with Space / gamepad button A: the ball is
   launched in the direction they are facing, and they get a brief pickup
   cooldown so they don't immediately re-absorb their own shot.
 • A gamepad's left analogue stick gives full 360° motion; keyboard arrow
@@ -90,10 +90,10 @@ class FootballGame(arcade.Window):
 
         # Input state
         self._keys: set[int] = set()
-        self._joy_shoot_prev = False
+        self._joy_strike_prev = False
         self._joy_switch_prev = False
-        self._human_shoot_requested = (
-            False  # set for one frame when human presses shoot
+        self._human_strike_requested = (
+            False  # set for one frame when human presses the strike button
         )
 
         # Gamepad – use the first connected controller if one is present
@@ -252,7 +252,7 @@ class FootballGame(arcade.Window):
             bold=True,
         )
         arcade.draw_text(
-            "Arrows / L-stick to move and aim shot · Space / A to shoot · R-stick to switch controlled player",
+            "Arrows / L-stick to move and aim · Space / A to strike · R-stick to switch controlled player",
             SCREEN_W / 2,
             28,
             C_HINT,
@@ -434,7 +434,7 @@ class FootballGame(arcade.Window):
 
         stat_rows: list[tuple[str, float, float, str]] = [
             ("Goals", _fval(home["goals"]), _fval(away["goals"]), "{:.0f}"),
-            ("Shots", _fval(home["shots"]), _fval(away["shots"]), "{:.0f}"),
+            ("Strikes", _fval(home["strikes"]), _fval(away["strikes"]), "{:.0f}"),
             (
                 "Possession",
                 _fval(home["possession_pct"]),
@@ -544,7 +544,7 @@ class FootballGame(arcade.Window):
     def on_key_press(self, key: int, modifiers: int) -> None:
         self._keys.add(key)
         if key == arcade.key.SPACE:
-            self._human_shoot_requested = True
+            self._human_strike_requested = True
 
     def on_key_release(self, key: int, modifiers: int) -> None:
         self._keys.discard(key)
@@ -575,8 +575,8 @@ class FootballGame(arcade.Window):
         # Advance simulation
         self.sim.step(dt, human_input)
 
-        # Clear single-frame shoot flag now that it has been consumed
-        self._human_shoot_requested = False
+        # Clear single-frame strike flag now that it has been consumed
+        self._human_strike_requested = False
 
     # ── Human input helpers ───────────────────────────────────────────────────
 
@@ -584,19 +584,19 @@ class FootballGame(arcade.Window):
         """Collect the current frame's human input.
 
         Returns ``None`` when no human player is configured.  Handles
-        gamepad shoot-button edge detection and right-stick player switching
+        gamepad strike-button edge detection and right-stick player switching
         as side effects before packaging the result.
         """
         if self._human_team is None:
             return None
 
-        # Gamepad: shoot button (edge-triggered) + right-stick player switch
+        # Gamepad: strike button (edge-triggered) + right-stick player switch
         if self._controlled is not None and self._joystick is not None:
             if self._joystick.buttons:
-                shoot_now = bool(self._joystick.buttons[0])
-                if shoot_now and not self._joy_shoot_prev:
-                    self._human_shoot_requested = True
-                self._joy_shoot_prev = shoot_now
+                strike_now = bool(self._joystick.buttons[0])
+                if strike_now and not self._joy_strike_prev:
+                    self._human_strike_requested = True
+                self._joy_strike_prev = strike_now
 
             jrx, jry = self._get_right_stick()
             switch_now = math.hypot(jrx, jry) > JOY_SWITCH_THRESHOLD
@@ -617,7 +617,7 @@ class FootballGame(arcade.Window):
             is_home=is_home,
             player_number=controlled.number,
             direction=(dx, dy),
-            shoot=self._human_shoot_requested,
+            strike=self._human_strike_requested,
         )
 
     def _get_move_input(self) -> tuple[float, float]:

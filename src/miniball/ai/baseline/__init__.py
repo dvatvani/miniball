@@ -15,10 +15,10 @@ class BaselineAI(BaseAI):
 
     The ball carrier's decision overrides the space-creation movement:
 
-    1. Within ``SHOOT_RANGE`` of the attacking goal → face goal and shoot.
+    1. Within ``STRIKE_RANGE`` of the attacking goal → face goal and strike.
     2. An opponent within ``PRESSURE_RANGE`` → pass to the furthest-forward
        teammate connected to the carrier by a Delaunay edge.  If no such
-       teammate exists, shoot toward goal instead.
+       teammate exists, strike toward goal instead.
     3. Otherwise → continue moving toward own Voronoi centroid.
 
     Out of possession
@@ -33,7 +33,7 @@ class BaselineAI(BaseAI):
     4. If the zone is empty, the player returns to their formation position.
     """
 
-    SHOOT_RANGE: float = 40.0
+    STRIKE_RANGE: float = 40.0
     PRESSURE_RANGE: float = 10.0
     COVERAGE_FRACTION: float = 0.9
     _VORONOI_GRID_STEP: float = 5.0  # pitch units between grid sample points
@@ -50,11 +50,11 @@ class BaselineAI(BaseAI):
         team_has_ball = ball_carrier is not None
 
         directions: dict[int, list[float]] = {}
-        shoot = False
+        strike = False
 
         if team_has_ball:
             assert ball_carrier is not None
-            directions, shoot = self._in_possession_actions(
+            directions, strike = self._in_possession_actions(
                 ball_carrier, teammates, opponents, gx, gy
             )
         else:
@@ -65,7 +65,7 @@ class BaselineAI(BaseAI):
             "actions": {
                 pid: {
                     "direction": direction,
-                    "shoot": shoot and pid == carrier_num,
+                    "strike": strike and pid == carrier_num,
                 }
                 for pid, direction in directions.items()
             }
@@ -91,12 +91,12 @@ class BaselineAI(BaseAI):
             directions[p["number"]] = list(self._norm(cx - px, cy - py))
 
         bx, by = ball_carrier["location"]
-        shoot = False
+        strike = False
 
-        if self._dist([bx, by], [gx, gy]) <= self.SHOOT_RANGE:
+        if self._dist([bx, by], [gx, gy]) <= self.STRIKE_RANGE:
             dx, dy = self._norm(gx - bx, gy - by)
             directions[ball_carrier["number"]] = [dx, dy]
-            shoot = True
+            strike = True
         else:
             forward_target = self._delaunay_pass_target(
                 ball_carrier, teammates, opponents, min_x=bx
@@ -110,7 +110,7 @@ class BaselineAI(BaseAI):
                 tx, ty = forward_target["location"]
                 dx, dy = self._norm(tx - bx, ty - by)
                 directions[ball_carrier["number"]] = [dx, dy]
-                shoot = True
+                strike = True
             elif under_pressure:
                 nearest_opp = min(
                     opponents,
@@ -118,9 +118,9 @@ class BaselineAI(BaseAI):
                 )
                 dy = -10.0 if nearest_opp["location"][1] > by else 10.0
                 directions[ball_carrier["number"]] = [10.0, dy]
-                shoot = True
+                strike = True
 
-        return directions, shoot
+        return directions, strike
 
     # ── Out-of-possession helpers ─────────────────────────────────────────────
 

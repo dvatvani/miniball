@@ -43,12 +43,12 @@ def team_summary(df: pl.DataFrame) -> pl.DataFrame:
 
     Columns
     -------
-    team, is_home, goals, goals_against, shots,
+    team, is_home, goals, goals_against, strikes,
     possession_pct, possession_count, avg_duration
 
     Notes
     -----
-    ``shots`` counts frames where a player had the ball and requested a shot.
+    ``strikes`` counts frames where a player had the ball and requested a strike.
     Because the ball is released the same frame a shot fires, this reliably
     gives one count per shot event.
 
@@ -61,7 +61,7 @@ def team_summary(df: pl.DataFrame) -> pl.DataFrame:
         .agg(
             pl.col("team_score").max().alias("goals"),
             pl.col("opposition_score").max().alias("goals_against"),
-            (pl.col("shoot") & pl.col("has_ball")).sum().alias("shots"),
+            (pl.col("strike") & pl.col("has_ball")).sum().alias("strikes"),
         )
         .sort("is_home", descending=True)
     )

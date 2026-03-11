@@ -56,7 +56,7 @@ Action schema
         "direction": [dx, dy],  # desired direction in standard pitch coords;
                                 # magnitude used as speed fraction (0–1),
                                 # clipped to 1 if larger
-        "shoot":     bool,      # request to shoot; ignored if player has no ball
+        "strike":    bool,      # request to strike the ball; ignored if player has no ball
     }
 
     TeamActions = {
@@ -108,7 +108,7 @@ class PlayerAction(TypedDict):
     direction: list[
         float
     ]  # [dx, dy] in standard pitch coords; magnitude = speed fraction (0–1)
-    shoot: bool  # request to shoot; only meaningful for the player who has the ball
+    strike: bool  # request to strike the ball; only meaningful for the player who has the ball
 
 
 class TeamActions(TypedDict):
@@ -148,7 +148,7 @@ class BaseAI(ABC):
         -------
         TeamActions
             Per-player actions keyed by player number.  Omitted players stand
-            still and do not shoot.
+            still and do not strike.
         """
         ...
 

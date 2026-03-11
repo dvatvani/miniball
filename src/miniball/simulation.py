@@ -50,8 +50,8 @@ from miniball.config import (
     PITCH_T,
     PLAYER_RADIUS,
     PLAYER_SPEED,
-    SHOOT_SPEED,
-    SHOT_COOLDOWN,
+    STRIKE_SPEED,
+    STRIKE_COOLDOWN,
     TACKLE_COOLDOWN,
 )
 from miniball.coordinate_transformations import (
@@ -78,7 +78,7 @@ class HumanInput:
     is_home: bool
     player_number: int
     direction: tuple[float, float]
-    shoot: bool
+    strike: bool
 
 
 @dataclass
@@ -190,7 +190,7 @@ class Player:
         self.facing: float = 0.0 if is_home else math.pi
         # Single cooldown timer – blocks ball possession regains only;
         # movement is always permitted.  Set to TACKLE_COOLDOWN after a
-        # tackle or SHOT_COOLDOWN after shooting (whichever is larger).
+        # tackle or STRIKE_COOLDOWN after striking (whichever is larger).
         self.cooldown_timer: float = 0.0
 
     @property
@@ -416,7 +416,7 @@ class GameSimulation:
         Layer 2 – human override
             If ``human_input`` targets this team, that player's entry is
             replaced with the human's direction (converted to the team frame)
-            and shoot flag.
+            and strike flag.
         """
         actions = ai.get_actions(state)
 
@@ -428,7 +428,7 @@ class GameSimulation:
             )
             actions["actions"][human_input.player_number] = {
                 "direction": [dx, dy],
-                "shoot": human_input.shoot,
+                "strike": human_input.strike,
             }
 
         return actions
@@ -494,7 +494,7 @@ class GameSimulation:
         dt: float,
         is_home: bool = True,
     ) -> None:
-        """Move and optionally shoot for each player according to actions."""
+        """Move and optionally strike for each player according to actions."""
         for p in players:
             player_action = actions["actions"].get(p.number)
             if player_action is None:
@@ -507,12 +507,12 @@ class GameSimulation:
                 p.x += (dx / norm) * PLAYER_SPEED * speed_frac * dt
                 p.y += (dy / norm) * PLAYER_SPEED * speed_frac * dt
                 p.facing = math.atan2(dy, dx)
-            if player_action["shoot"]:
-                self._handle_shoot(p)
+            if player_action["strike"]:
+                self._handle_strike(p)
 
     # ── Physics helpers ───────────────────────────────────────────────────────
 
-    def _handle_shoot(self, player: Player) -> None:
+    def _handle_strike(self, player: Player) -> None:
         """Launch the ball in ``player``'s facing direction."""
         if self.ball.possessed_by is not player:
             return
@@ -523,9 +523,9 @@ class GameSimulation:
         self.ball.y = player.y + math.sin(player.facing) * (
             PLAYER_RADIUS + BALL_RADIUS + 2
         )
-        self.ball.vx = math.cos(player.facing) * SHOOT_SPEED
-        self.ball.vy = math.sin(player.facing) * SHOOT_SPEED
-        player.cooldown_timer = max(player.cooldown_timer, SHOT_COOLDOWN)
+        self.ball.vx = math.cos(player.facing) * STRIKE_SPEED
+        self.ball.vy = math.sin(player.facing) * STRIKE_SPEED
+        player.cooldown_timer = max(player.cooldown_timer, STRIKE_COOLDOWN)
 
     def _update_possession(self) -> None:
         possessor = self.ball.possessed_by
@@ -641,7 +641,7 @@ class GameSimulation:
             match_time = record.state["match_state"]["match_time_seconds"]
             t = record.game_time
 
-            _null_action: PlayerAction = {"direction": [0.0, 0.0], "shoot": False}
+            _null_action: PlayerAction = {"direction": [0.0, 0.0], "strike": False}
             hp = record.human_player
 
             for player in record.state["team"]:  # team A – own frame = global
@@ -670,7 +670,7 @@ class GameSimulation:
                         "action_dy": dy,
                         "action_dx_global": dx,
                         "action_dy_global": dy,
-                        "shoot": pa_a["shoot"],
+                        "strike": pa_a["strike"],
                         "ball_x": gbx,
                         "ball_y": gby,
                         "ball_x_global": gbx,
@@ -714,7 +714,7 @@ class GameSimulation:
                         "action_dy": dy_b,
                         "action_dx_global": adx_g,
                         "action_dy_global": ady_g,
-                        "shoot": pa_b["shoot"],
+                        "strike": pa_b["strike"],
                         "ball_x": bbx,
                         "ball_y": bby,
                         "ball_x_global": gbx,
