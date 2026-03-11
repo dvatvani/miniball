@@ -8,15 +8,22 @@ Library usage
 ::
 
     from miniball.league_simulation import simulate_league, simulate_fixtures, build_league_table
+    from miniball.teams import Team, teams_list
+    from miniball.ai import BaselineAI
 
     # Full league with all registered teams (default)
     table = simulate_league()
 
-    # Subset of teams
-    table = simulate_league(["Baseline AI (1-2-2)", "BallChasers AI"])
+    # Subset of registered teams
+    from miniball.teams import teams
+    table = simulate_league([teams["Baseline (1-2-2)"], teams["Ball Chasers"]])
+
+    # Teams generated on the fly
+    custom = Team(name="My AI", ai=BaselineAI)
+    table = simulate_league([custom, *teams_list])
 
     # Lower-level: run specific fixtures and aggregate yourself
-    results = simulate_fixtures([("Team A", "Team B"), ("Team B", "Team A")])
+    results = simulate_fixtures([(teams_list[0], teams_list[1])])
     table = build_league_table(results)
 
 CLI usage
@@ -36,6 +43,8 @@ from itertools import permutations
 
 import polars as pl
 
+from miniball.teams import Team
+
 # ── Public types ──────────────────────────────────────────────────────────────
 
 
@@ -52,29 +61,26 @@ class MatchResult:
 # ── Worker function (must be module-level for multiprocessing pickling) ───────
 
 
-def _run_match(home_name: str, away_name: str) -> MatchResult:
+def _run_match(home_team: Team, away_team: Team) -> MatchResult:
     """Run one headless simulation and return a compact result.
 
-    Only plain strings cross the process boundary; all heavy imports happen
-    inside the worker so nothing non-picklable is sent via the queue.
+    ``Team`` objects (and their ``BaseAI`` instances) are picklable, so they
+    cross the process boundary without issue.  Heavy imports happen inside the
+    worker to keep the fork payload small.
     """
     from miniball import match_stats
     from miniball.simulation import GameSimulation
-    from miniball.teams import teams
 
-    sim = GameSimulation(teams[home_name], teams[away_name])
-    while not sim.game_over:
-        sim.step(1 / 60)
-
-    df = sim.build_match_df()
+    sim = GameSimulation(home_team, away_team)
+    df = sim.simulate_match()
     assert df is not None, "match DataFrame should be populated after game over"
     summary = match_stats.team_summary(df)
     home_row = summary.filter(pl.col("is_home")).row(0, named=True)
     away_row = summary.filter(~pl.col("is_home")).row(0, named=True)
 
     return MatchResult(
-        home_team=home_name,
-        away_team=away_name,
+        home_team=home_team.name,
+        away_team=away_team.name,
         home_goals=int(home_row["goals"]),
         away_goals=int(away_row["goals"]),
     )
@@ -84,18 +90,18 @@ def _run_match(home_name: str, away_name: str) -> MatchResult:
 
 
 def simulate_fixtures(
-    fixtures: list[tuple[str, str]],
+    fixtures: list[tuple[Team, Team]],
     *,
     n_workers: int | None = None,
     show_progress: bool = False,
 ) -> list[MatchResult]:
-    """Run a list of (home_team_name, away_team_name) fixtures in parallel.
+    """Run a list of ``(home_team, away_team)`` fixtures in parallel.
 
     Parameters
     ----------
     fixtures:
-        Ordered pairs of team names.  Each pair is one match; include both
-        orderings to give each team a home fixture.
+        Ordered pairs of ``Team`` objects.  Each pair is one match; include
+        both orderings to give each team a home fixture.
     n_workers:
         Number of worker processes.  Defaults to ``min(cpu_count, len(fixtures))``.
     show_progress:
@@ -120,7 +126,9 @@ def simulate_fixtures(
             results.append(r)
             if show_progress:
                 score = f"{r.home_goals}–{r.away_goals}"
-                print(f"  [{i:2d}/{len(fixtures)}]  {home:<32s}  {score:^5s}  {away}")
+                print(
+                    f"  [{i:2d}/{len(fixtures)}]  {home.name:<32s}  {score:^5s}  {away.name}"
+                )
 
     return results
 
@@ -196,7 +204,7 @@ def build_league_table(results: list[MatchResult]) -> pl.DataFrame:
 
 
 def simulate_league(
-    team_names: list[str] | None = None,
+    teams: list[Team] | None = None,
     *,
     n_workers: int | None = None,
     show_progress: bool = False,
@@ -208,9 +216,10 @@ def simulate_league(
 
     Parameters
     ----------
-    team_names:
-        Names of teams to include.  Must match keys in
-        ``miniball.teams.teams``.  Defaults to all registered teams.
+    teams:
+        ``Team`` objects to include.  Any ``Team`` is accepted — teams do not
+        need to be registered in ``miniball.teams.teams_list``.  Defaults to
+        all teams in ``miniball.teams.teams_list``.
     n_workers:
         Number of worker processes.  Defaults to ``min(cpu_count, fixtures)``.
     show_progress:
@@ -222,16 +231,11 @@ def simulate_league(
         League table with columns:
         pos, team, played, won, drawn, lost, gf, ga, gd, pts
     """
-    from miniball.teams import teams, teams_list
+    from miniball.teams import teams_list
 
-    names = team_names if team_names is not None else [t.name for t in teams_list]
+    teams = teams if teams is not None else teams_list
 
-    # Validate names early in the calling process (not inside workers).
-    unknown = [n for n in names if n not in teams]
-    if unknown:
-        raise ValueError(f"Unknown team name(s): {unknown!r}")
-
-    fixtures = list(permutations(names, 2))
+    fixtures = list(permutations(teams, 2))
     results = simulate_fixtures(
         fixtures, n_workers=n_workers, show_progress=show_progress
     )
@@ -303,7 +307,7 @@ if __name__ == "__main__":
     _elapsed = time.perf_counter() - _t0
 
     console.print(
-        f"\n[dim]{len(_fixtures)} matches in {_elapsed:.1f}s"
+        f"\n[dim]{len(_fixtures)} matches in {_elapsed:.1f} s"
         f"  ({_elapsed / len(_fixtures) * 1000:.0f} ms/match)[/dim]"
     )
     console.rule("[bold]League Table[/bold]")
