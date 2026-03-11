@@ -36,6 +36,7 @@ C_BALL_OUTLINE = (20, 20, 20)
 C_PLAYER_OUTLINE = (20, 20, 20)
 C_CONTROLLED = (255, 215, 0)  # yellow  – keyboard-controlled player
 C_POSSESSION = (255, 255, 255)  # white   – player who has the ball
+C_COOLDOWN_RING = (255, 160, 50)  # amber  – radial cooldown arc
 C_TEAM_A = (210, 40, 40)  # red   – left side
 C_TEAM_B = (30, 100, 200)  # blue  – right side
 C_HUD = (255, 255, 255)

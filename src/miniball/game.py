@@ -32,6 +32,7 @@ from miniball.config import (
     C_BALL,
     C_BALL_OUTLINE,
     C_CONTROLLED,
+    C_COOLDOWN_RING,
     C_GOAL,
     C_GRASS,
     C_HINT,
@@ -57,6 +58,8 @@ from miniball.config import (
     SCREEN_W,
     STANDARD_PITCH_HEIGHT,
     STANDARD_PITCH_WIDTH,
+    STRIKE_COOLDOWN,
+    TACKLE_COOLDOWN,
     TITLE,
 )
 from miniball.simulation import GameSimulation, HumanInput, Player
@@ -170,6 +173,26 @@ class FootballGame(arcade.Window):
 
         if highlight:
             arcade.draw_circle_outline(p.x, p.y, PLAYER_RADIUS + 2, C_CONTROLLED, 2)
+
+        # Radial cooldown ring: sweeps counter-clockwise from 12 o'clock, so
+        # the gap grows clockwise as the cooldown depletes.
+        if p.on_cooldown:
+            _max_cd = max(TACKLE_COOLDOWN, STRIKE_COOLDOWN)
+            fraction = min(1.0, p.cooldown_timer / _max_cd)
+            _ring_r = PLAYER_RADIUS - 4  # just inside the player outline
+            if fraction >= 1.0:
+                arcade.draw_circle_outline(p.x, p.y, _ring_r, C_COOLDOWN_RING, 3)
+            elif fraction > 0.0:
+                arcade.draw_arc_outline(
+                    p.x,
+                    p.y,
+                    _ring_r * 2,
+                    _ring_r * 2,
+                    C_COOLDOWN_RING,
+                    start_angle=90,
+                    end_angle=90 + fraction * 360,
+                    border_width=3,
+                )
 
         arcade.draw_text(
             str(p.number),
