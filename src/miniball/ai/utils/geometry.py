@@ -1,8 +1,12 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
 from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy
+from matplotlib.path import Path
 
 from miniball.ai.interface import PlayerState
 from miniball.config import STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
@@ -73,6 +77,35 @@ def centroid_region(vertices):
     C_x = (1.0 / (6.0 * A)) * C_x
     C_y = (1.0 / (6.0 * A)) * C_y
     return np.array([[C_x, C_y]])
+
+
+def location_in_polygon(location: Sequence[float], polygon: np.ndarray) -> bool:
+    """Return ``True`` if ``location`` lies inside ``polygon``.
+
+    Uses the winding-number algorithm via ``matplotlib.path.Path``.  The
+    polygon does not need to be explicitly closed — the last edge back to the
+    first vertex is added automatically.
+
+    Parameters
+    ----------
+    location:
+        ``(x, y)`` point to test.
+    polygon:
+        (M, 2) array of polygon vertex coordinates in order.
+    """
+    return bool(Path(polygon).contains_point((location[0], location[1])))
+
+
+def player_in_polygon(player: PlayerState, polygon: np.ndarray) -> bool:
+    """Return ``True`` if the player's location is inside ``polygon``."""
+    return location_in_polygon(player["location"], polygon)
+
+
+def players_in_polygon(
+    players: list[PlayerState], polygon: np.ndarray
+) -> list[PlayerState]:
+    """Return the subset of ``players`` whose location is inside ``polygon``."""
+    return [p for p in players if player_in_polygon(p, polygon)]
 
 
 def plot_bounded_voronoi(vor: SimpleNamespace, plot_centroids: bool = True):
