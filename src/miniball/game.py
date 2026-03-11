@@ -607,7 +607,7 @@ class FootballGame(arcade.Window):
                 if self._stats_countdown <= 0:
                     match_df = self.sim.build_match_df()
                     if match_df is not None:
-                        self.sim._write_parquet(match_df)
+                        self.sim.export_history()
                         self._team_summary_df = match_stats.team_summary(match_df)
                         self._avg_positions_df = match_stats.avg_positions(match_df)
                     self._show_stats = True

@@ -1,6 +1,6 @@
 """Post-match statistics derived from the frame-level history DataFrame.
 
-All functions accept the DataFrame produced by ``FootballGame._build_match_df``
+All functions accept the DataFrame produced by ``GameSimulation.build_match_df``
 and return tidy Polars DataFrames suitable for display or further analysis.
 
 Possession sessionisation
@@ -71,7 +71,7 @@ def strike_stats(df: pl.DataFrame) -> pl.DataFrame:
     Parameters
     ----------
     df:
-        Frame-level DataFrame produced by ``GameSimulation._build_match_df``.
+        Frame-level DataFrame produced by ``GameSimulation.build_match_df``.
 
     Returns
     -------
@@ -292,7 +292,7 @@ def sessionise_possessions(df: pl.DataFrame) -> pl.DataFrame:
     Parameters
     ----------
     df:
-        Frame-level DataFrame produced by ``FootballGame._build_match_df``.
+        Frame-level DataFrame produced by ``GameSimulation.build_match_df``.
 
     Returns
     -------

@@ -50,8 +50,8 @@ from miniball.config import (
     PITCH_T,
     PLAYER_RADIUS,
     PLAYER_SPEED,
-    STRIKE_SPEED,
     STRIKE_COOLDOWN,
+    STRIKE_SPEED,
     TACKLE_COOLDOWN,
 )
 from miniball.coordinate_transformations import (
@@ -246,7 +246,6 @@ class GameSimulation:
         self._countdown: float = 3.0  # pre-kick-off / post-goal freeze
 
         self._history: list[FrameRecord] = []
-        self._match_df: pl.DataFrame | None = None  # cached at game over
 
         for player_config in team_a_config.players:
             sx, sy = team_to_screen(player_config.x / 2, player_config.y, is_home=True)
@@ -382,19 +381,17 @@ class GameSimulation:
         # 7. Goal detection.
         self._check_goals()
 
+    def simulate_match(self, dt: float = 1 / 60) -> pl.DataFrame | None:
+        """Simulate a match and return the match DataFrame."""
+        while not self.game_over:
+            self.step(dt)
+        return self.build_match_df()
+
     # ── Analytics ─────────────────────────────────────────────────────────────
 
-    def build_match_df(self) -> pl.DataFrame | None:
-        """Return the cached match DataFrame (available after ``game_over``)."""
-        return self._build_match_df()
-
     def export_history(self) -> None:
-        """Write the match history to a parquet file on demand.
-
-        Called automatically at game-over.  Can also be called explicitly from
-        headless runners that want to trigger the export at a custom time.
-        """
-        df = self._match_df or self._build_match_df()
+        """Write the match history to a parquet file on demand."""
+        df = self.build_match_df()
         if df is not None:
             self._write_parquet(df)
 
@@ -608,7 +605,7 @@ class GameSimulation:
 
     # ── Analytics export ──────────────────────────────────────────────────────
 
-    def _build_match_df(self) -> pl.DataFrame | None:
+    def build_match_df(self) -> pl.DataFrame | None:
         """Flatten ``_history`` into a Polars DataFrame and return it.
 
         Each row represents one player at one frame.
