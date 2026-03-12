@@ -1,6 +1,6 @@
 # Miniball
 
-A developer/analyst-friendly 2D 5-as-side "football" game.
+A developer/analyst-friendly 2D 5-as-side football-inspired game.
 
 The game can be played as an arcade game with a controller, but a big part of the game's design and appeal is to enable you to program your own bots and have them play against each other. The rules of the game have also deliberately been kept simple to make it easier to model. After playing a few games (or watching the bots play each other), you're encouraged to build your own AI team to see where it would place in a all-AI league.
 
@@ -13,7 +13,7 @@ The game can be played as an arcade game with a controller, but a big part of th
  - The defending team can collide with the player on the ball to automatically tackle and regain possession
  - Other than moving, there's a single action that can be taken to strike the ball in the direction the player is moving. This happens instantaneously (no charge-up) and at a fixed speed. This action, combined with the movement direction, is used to pass, clear and shoot the ball.
  - To prevent some exploits that emerge from the rules above, players that lose or strike the ball have a short cooldown period before they can interact with the ball again
- - No fouls or set pieces. There are walls along the edge of the pitch to keep the ball in play.
+ - No offsides, fouls or set pieces. There are walls along the edge of the pitch to keep the ball in play.
 - Kickoffs: The furthest forward player in the home team starts with possession rather than kick-odds happening at the center circle. After a goal is conceded, the conceding team kicks off in a similar way.
 - Player collisions: Players positions can't overlap. Players will instead push other players (not at full running speed) if attempting to move a location containing another player.
 
