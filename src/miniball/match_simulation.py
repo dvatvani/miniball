@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 import os
 import random
+import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -729,7 +730,7 @@ class MatchSimulation:
 
         return pl.DataFrame(rows)
 
-    def _write_parquet(self, df: pl.DataFrame) -> None:
+    def _write_parquet(self, df: pl.DataFrame, verbose: bool = True) -> None:
         """Write a match history DataFrame to a timestamped parquet file."""
         out_dir = Path("match_data")
         out_dir.mkdir(exist_ok=True)
@@ -737,9 +738,10 @@ class MatchSimulation:
         unique_id = str(uuid.uuid4())[:8]
         path = out_dir / f"match_{timestamp}_{unique_id}.parquet"
         df.write_parquet(path)
-        print(
-            f"Match data saved → {path}  ({len(self._history)} frames · {len(df)} rows)"
-        )
+        if verbose:
+            print(
+                f"Match data saved → {path}  ({len(self._history)} frames · {len(df)} rows)"
+            )
 
 
 # ── Parallel fixture runner ───────────────────────────────────────────────────
@@ -768,7 +770,7 @@ def _simulate_match(
     assert df is not None, "match DataFrame should be populated after game over"
 
     if save_data:
-        sim._write_parquet(df)
+        sim._write_parquet(df, verbose=False)
 
     # Final scores sit in the last row of any home-team player's records.
     # team_score / opposition_score are always from the perspective of is_home.
@@ -787,6 +789,7 @@ def simulate_matches(
     *,
     n_workers: int | None = None,
     show_progress: bool = False,
+    save_data: bool = False,
 ) -> list[MatchResult]:
     """Run a list of ``(home_team, away_team)`` fixtures in parallel.
 
@@ -799,7 +802,8 @@ def simulate_matches(
         Number of worker processes.  Defaults to ``min(cpu_count, len(fixtures))``.
     show_progress:
         When ``True``, print a one-line result as each match completes.
-
+    save_data:
+        When ``True``, save the match data to parquet files.
     Returns
     -------
     list[MatchResult]
@@ -807,14 +811,19 @@ def simulate_matches(
     """
     workers = min(n_workers or (os.cpu_count() or 1), len(matches))
     results: list[MatchResult] = []
+    start_time = time.perf_counter()
 
     with ProcessPoolExecutor(max_workers=workers) as executor:
         future_to_fixture = {
-            executor.submit(_simulate_match, home, away): (home, away)
+            executor.submit(_simulate_match, home, away, save_data): (
+                home,
+                away,
+                save_data,
+            )
             for home, away in matches
         }
         for i, future in enumerate(as_completed(future_to_fixture), 1):
-            home, away = future_to_fixture[future]
+            home, away, save_data = future_to_fixture[future]
             r = future.result()
             results.append(r)
             if show_progress:
@@ -823,6 +832,14 @@ def simulate_matches(
                     f"  [{i:2d}/{len(matches)}]  {home.name:<32s}  {score:^5s}  {away.name}"
                 )
 
+    console.print(
+        f"\n[dim]{len(matches)} matches in {time.perf_counter() - start_time:.1f} s"
+        f"  ({(time.perf_counter() - start_time) / len(matches) * 1000:.0f} ms/match)[/dim]"
+    )
+    if save_data:
+        console.print(
+            f"\n[dim]{len(matches)} matches saved to parquet files in {Path('match_data').absolute()}[/dim]"
+        )
     return results
 
 
@@ -835,14 +852,20 @@ if __name__ == "__main__":
     console = Console()
 
     def _cli(
-        home_team: str = typer.Option(teams_list[0].name, help="Home team model name"),
-        away_team: str = typer.Option(teams_list[1].name, help="Away team model name"),
+        home_team: str | None = typer.Option(None, help="Home team model name"),
+        away_team: str | None = typer.Option(None, help="Away team model name"),
+        save_data: bool = typer.Option(False, help="Save match data to parquet files"),
+        n_matches: int = typer.Option(1, help="Number of matches to simulate"),
     ):
-        console.print(
-            f"[bold green]Simulating match between {home_team} and {away_team}[/bold green]"
-        )
-        sim = MatchSimulation(teams[home_team], teams[away_team])
-        sim.simulate_match()
-        sim.export_history()
+        matches = []
+        for _ in range(n_matches):
+            h = teams[home_team] if home_team else random.choice(teams_list)
+            a = (
+                teams[away_team]
+                if away_team
+                else random.choice([t for t in teams_list if t is not h])
+            )
+            matches.append((h, a))
+        simulate_matches(matches, show_progress=True, save_data=save_data)
 
     typer.run(_cli)
