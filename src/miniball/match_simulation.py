@@ -27,6 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 import polars as pl
+from rich.console import Console
 
 from miniball.ai import (
     BaseAI,
@@ -65,6 +66,8 @@ from miniball.coordinate_transformations import (
     team_to_screen,
 )
 from miniball.teams import Team
+
+console = Console()
 
 # ── Public data types ─────────────────────────────────────────────────────────
 
@@ -845,11 +848,8 @@ def simulate_matches(
 
 if __name__ == "__main__":
     import typer
-    from rich.console import Console
 
     from miniball.teams import teams, teams_list
-
-    console = Console()
 
     def _cli(
         home_team: str | None = typer.Option(None, help="Home team model name"),
