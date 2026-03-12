@@ -2,7 +2,7 @@
 
 A developer/analyst-friendly 2D 5-as-side football-inspired game.
 
-The game can be played as an arcade game with a controller, but a big part of the game's design and appeal is to enable you to program your own bots and have them play against each other. The rules of the game have also deliberately been kept simple to make it easier to model. After playing a few games (or watching the bots play each other), you're encouraged to build your own AI team to see where it would place in a all-AI league.
+The game can be played as an arcade game with a controller, but a big part of the game's design and appeal is to enable you to program your own bots and have them play against each other. The rules of the game have also deliberately been kept simple to make it easier to model. After playing a few games (or watching the bots play each other), you're encouraged to build your own bot/AI team to see where it would place in a all-AI league.
 
 ### Gameplay / Rules
  - 5-a-side
@@ -14,8 +14,8 @@ The game can be played as an arcade game with a controller, but a big part of th
  - Other than moving, there's a single action that can be taken to strike the ball in the direction the player is moving. This happens instantaneously (no charge-up) and at a fixed speed. This action, combined with the movement direction, is used to pass, clear and shoot the ball.
  - To prevent some exploits that emerge from the rules above, players that lose or strike the ball have a short cooldown period before they can interact with the ball again
  - No offsides, fouls or set pieces. There are walls along the edge of the pitch to keep the ball in play.
-- Kickoffs: The furthest forward player in the home team starts with possession rather than kick-odds happening at the center circle. After a goal is conceded, the conceding team kicks off in a similar way.
-- Player collisions: Players positions can't overlap. Players will instead push other players (not at full running speed) if attempting to move a location containing another player.
+- Kickoffs: The furthest forward player in the home team starts with possession rather than kick-offs happening at the center circle. After a goal is conceded, the conceding team kicks off in a similar way.
+- Player collisions: Player positions can't overlap. Players will instead push other players (not at full running speed) if attempting to move a location containing another player.
 
 ---
 
@@ -79,23 +79,23 @@ Headless AI vs AI match simulations can be run from the CLI
 uv run -m miniball.match_simulation
 ```
 
+Running the above with a `--help` flag lists the CLI options available.
+
 The results of the match simulation are stored in the `match_data` directory, and can be analysed with the `notebooks/analyse_match.py` marimo notebook.
 
 Matches can also be simulated easily from within Python:
 
 ```python
 from miniball.teams import teams_list
-from miniball.match_simulation import MatchSimulation
-sim = MatchSimulation(teams_list[0], teams_list[1])
-match_df = sim.simulate_match()
-sim.export_history(). # Optionally, export the data to parquet
+from miniball.match_simulation import simulate_matches
+results = simulate_matches([teams_list[0], teams_list[1]])
 ```
 
 ### League simulations
 
 Round-robin league simulations including all AI models can be run from the CLI
 ```bash
-uv run -m miniball.league_simulation
+just run-league-simulation
 ```
 
 League simulations can also be easily run from within Python:
