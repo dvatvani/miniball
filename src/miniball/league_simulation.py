@@ -7,7 +7,8 @@ Library usage
 -------------
 ::
 
-    from miniball.league_simulation import simulate_league, simulate_fixtures, build_league_table
+    from miniball.league_simulation import simulate_league, build_league_table
+    from miniball.match_simulation import simulate_fixtures
     from miniball.teams import Team, teams_list
     from miniball.ai import BaselineAI
 
@@ -35,102 +36,15 @@ CLI usage
 
 from __future__ import annotations
 
-import os
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass
 from itertools import permutations
 
 import polars as pl
 
+from miniball.match_simulation import MatchResult, simulate_matches
 from miniball.teams import Team
 
-# ── Public types ──────────────────────────────────────────────────────────────
-
-
-@dataclass
-class MatchResult:
-    """Outcome of a single simulated match."""
-
-    home_team: str
-    away_team: str
-    home_goals: int
-    away_goals: int
-
-
-# ── Worker function (must be module-level for multiprocessing pickling) ───────
-
-
-def _run_match(home_team: Team, away_team: Team) -> MatchResult:
-    """Run one headless simulation and return a compact result.
-
-    ``Team`` objects (and their ``BaseAI`` instances) are picklable, so they
-    cross the process boundary without issue.  Heavy imports happen inside the
-    worker to keep the fork payload small.
-    """
-    from miniball import match_stats
-    from miniball.match_simulation import MatchSimulation
-
-    sim = MatchSimulation(home_team, away_team)
-    df = sim.simulate_match()
-    assert df is not None, "match DataFrame should be populated after game over"
-    summary = match_stats.team_summary(df)
-    home_row = summary.filter(pl.col("is_home")).row(0, named=True)
-    away_row = summary.filter(~pl.col("is_home")).row(0, named=True)
-
-    return MatchResult(
-        home_team=home_team.name,
-        away_team=away_team.name,
-        home_goals=int(home_row["goals"]),
-        away_goals=int(away_row["goals"]),
-    )
-
-
 # ── Public API ────────────────────────────────────────────────────────────────
-
-
-def simulate_fixtures(
-    fixtures: list[tuple[Team, Team]],
-    *,
-    n_workers: int | None = None,
-    show_progress: bool = False,
-) -> list[MatchResult]:
-    """Run a list of ``(home_team, away_team)`` fixtures in parallel.
-
-    Parameters
-    ----------
-    fixtures:
-        Ordered pairs of ``Team`` objects.  Each pair is one match; include
-        both orderings to give each team a home fixture.
-    n_workers:
-        Number of worker processes.  Defaults to ``min(cpu_count, len(fixtures))``.
-    show_progress:
-        When ``True``, print a one-line result as each match completes.
-
-    Returns
-    -------
-    list[MatchResult]
-        Results in completion order (not fixture order).
-    """
-    workers = min(n_workers or (os.cpu_count() or 1), len(fixtures))
-    results: list[MatchResult] = []
-
-    with ProcessPoolExecutor(max_workers=workers) as executor:
-        future_to_fixture = {
-            executor.submit(_run_match, home, away): (home, away)
-            for home, away in fixtures
-        }
-        for i, future in enumerate(as_completed(future_to_fixture), 1):
-            home, away = future_to_fixture[future]
-            r = future.result()
-            results.append(r)
-            if show_progress:
-                score = f"{r.home_goals}–{r.away_goals}"
-                print(
-                    f"  [{i:2d}/{len(fixtures)}]  {home.name:<32s}  {score:^5s}  {away.name}"
-                )
-
-    return results
 
 
 def build_league_table(results: list[MatchResult]) -> pl.DataFrame:
@@ -236,7 +150,7 @@ def simulate_league(
     teams = teams if teams is not None else teams_list
 
     fixtures = list(permutations(teams, 2))
-    results = simulate_fixtures(
+    results = simulate_matches(
         fixtures, n_workers=n_workers, show_progress=show_progress
     )
     return build_league_table(results)
@@ -287,19 +201,21 @@ def _print_league_table(table: pl.DataFrame) -> None:
 
 
 if __name__ == "__main__":
+    import os
+
     from rich.console import Console
 
     from miniball.teams import teams_list
 
     console = Console()
 
-    _names = [t.name for t in teams_list]
-    _fixtures = list(permutations(_names, 2))
-    _workers = min(os.cpu_count() or 1, len(_fixtures))
+    _n = len(teams_list)
+    _n_fixtures = _n * (_n - 1)  # each pair plays home and away
+    _workers = min(os.cpu_count() or 1, _n_fixtures)
 
     console.print(
-        f"[bold]League:[/bold] {len(_names)} teams · "
-        f"{len(_fixtures)} fixtures · {_workers} workers\n"
+        f"[bold]League:[/bold] {_n} teams · "
+        f"{_n_fixtures} fixtures · {_workers} workers\n"
     )
 
     _t0 = time.perf_counter()
@@ -307,8 +223,8 @@ if __name__ == "__main__":
     _elapsed = time.perf_counter() - _t0
 
     console.print(
-        f"\n[dim]{len(_fixtures)} matches in {_elapsed:.1f} s"
-        f"  ({_elapsed / len(_fixtures) * 1000:.0f} ms/match)[/dim]"
+        f"\n[dim]{_n_fixtures} matches in {_elapsed:.1f} s"
+        f"  ({_elapsed / _n_fixtures * 1000:.0f} ms/match)[/dim]"
     )
     console.rule("[bold]League Table[/bold]")
     _print_league_table(_table)

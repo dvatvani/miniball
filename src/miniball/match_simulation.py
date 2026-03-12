@@ -17,8 +17,10 @@ fully AI-driven simulation.
 from __future__ import annotations
 
 import math
+import os
 import random
 import uuid
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -738,6 +740,90 @@ class MatchSimulation:
         print(
             f"Match data saved → {path}  ({len(self._history)} frames · {len(df)} rows)"
         )
+
+
+# ── Parallel fixture runner ───────────────────────────────────────────────────
+
+
+@dataclass
+class MatchResult:
+    """Outcome of a single simulated match."""
+
+    home_team: str
+    away_team: str
+    home_goals: int
+    away_goals: int
+
+
+def _simulate_match(
+    home_team: Team, away_team: Team, save_data: bool = False
+) -> MatchResult:
+    """Run one headless simulation and return a compact result.
+
+    ``Team`` objects (and their ``BaseAI`` instances) are picklable, so they
+    cross the process boundary without issue.
+    """
+    sim = MatchSimulation(home_team, away_team)
+    df = sim.simulate_match()
+    assert df is not None, "match DataFrame should be populated after game over"
+
+    if save_data:
+        sim._write_parquet(df)
+
+    # Final scores sit in the last row of any home-team player's records.
+    # team_score / opposition_score are always from the perspective of is_home.
+    last = df.filter(pl.col("is_home")).tail(1).row(0, named=True)
+
+    return MatchResult(
+        home_team=home_team.name,
+        away_team=away_team.name,
+        home_goals=int(last["team_score"]),
+        away_goals=int(last["opposition_score"]),
+    )
+
+
+def simulate_matches(
+    matches: list[tuple[Team, Team]],
+    *,
+    n_workers: int | None = None,
+    show_progress: bool = False,
+) -> list[MatchResult]:
+    """Run a list of ``(home_team, away_team)`` fixtures in parallel.
+
+    Parameters
+    ----------
+    fixtures:
+        Ordered pairs of ``Team`` objects.  Each pair is one match; include
+        both orderings to give each team a home fixture.
+    n_workers:
+        Number of worker processes.  Defaults to ``min(cpu_count, len(fixtures))``.
+    show_progress:
+        When ``True``, print a one-line result as each match completes.
+
+    Returns
+    -------
+    list[MatchResult]
+        Results in completion order (not fixture order).
+    """
+    workers = min(n_workers or (os.cpu_count() or 1), len(matches))
+    results: list[MatchResult] = []
+
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        future_to_fixture = {
+            executor.submit(_simulate_match, home, away): (home, away)
+            for home, away in matches
+        }
+        for i, future in enumerate(as_completed(future_to_fixture), 1):
+            home, away = future_to_fixture[future]
+            r = future.result()
+            results.append(r)
+            if show_progress:
+                score = f"{r.home_goals}–{r.away_goals}"
+                print(
+                    f"  [{i:2d}/{len(matches)}]  {home.name:<32s}  {score:^5s}  {away.name}"
+                )
+
+    return results
 
 
 if __name__ == "__main__":
