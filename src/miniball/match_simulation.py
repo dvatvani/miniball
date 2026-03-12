@@ -741,8 +741,22 @@ class MatchSimulation:
 
 
 if __name__ == "__main__":
-    from miniball.teams import teams
+    import typer
+    from rich.console import Console
 
-    sim = MatchSimulation(teams["Baseline (1-2-2)"], teams["Baseline (1-3-1)"])
-    df = sim.simulate_match()
-    sim.export_history()
+    from miniball.teams import teams, teams_list
+
+    console = Console()
+
+    def _cli(
+        home_team: str = typer.Option(teams_list[0].name, help="Home team model name"),
+        away_team: str = typer.Option(teams_list[1].name, help="Away team model name"),
+    ):
+        console.print(
+            f"[bold green]Simulating match between {home_team} and {away_team}[/bold green]"
+        )
+        sim = MatchSimulation(teams[home_team], teams[away_team])
+        sim.simulate_match()
+        sim.export_history()
+
+    typer.run(_cli)
