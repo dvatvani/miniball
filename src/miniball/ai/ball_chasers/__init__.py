@@ -51,7 +51,7 @@ class BallChasersAI(BaseAI):
 
             elif teammate_has_ball:
                 # ── Drift back to home position to open up space ───────────
-                formation_location = self.formation.get(pid, [px, py])
+                formation_location = self.formation.get(pid, (px, py))
                 if dist([px, py], formation_location) > self.HOME_DEADBAND:
                     directions[pid] = norm(
                         formation_location[0] - px, formation_location[1] - py

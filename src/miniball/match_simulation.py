@@ -444,8 +444,8 @@ class MatchSimulation:
         """
         is_home = perspective_team_is_home
 
-        def pos(x: float, y: float) -> list[float]:
-            return list(screen_to_team(x, y, is_home=is_home))
+        def pos(x: float, y: float) -> tuple[float, float]:
+            return screen_to_team(x, y, is_home=is_home)
 
         team: list[PlayerState] = [
             {
@@ -483,8 +483,8 @@ class MatchSimulation:
             "opposition": opposition,
             "ball": {
                 "location": pos(self.ball.x, self.ball.y),
-                "velocity": list(
-                    screen_delta_to_team(self.ball.vx, self.ball.vy, is_home=is_home)
+                "velocity": screen_delta_to_team(
+                    self.ball.vx, self.ball.vy, is_home=is_home
                 ),
             },
             "match_state": match_state,

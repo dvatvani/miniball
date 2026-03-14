@@ -34,12 +34,12 @@ def make_player(
         "is_teammate": is_teammate,
         "has_ball": has_ball,
         "cooldown_timer": 0.0,
-        "location": [x, y],
+        "location": (x, y),
     }
 
 
 def make_ball(x: float, y: float, vx: float = 0.0, vy: float = 0.0) -> BallState:
-    return {"location": [x, y], "velocity": [vx, vy]}
+    return {"location": (x, y), "velocity": (vx, vy)}
 
 
 # ── dist ──────────────────────────────────────────────────────────────────────

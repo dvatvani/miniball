@@ -22,7 +22,7 @@ STRIKE_SPEED = 550  # px / s on a strike
 MAX_BALL_SPEED = 700
 GAME_DURATION = 60.0  # seconds per half (full game = one period)
 TACKLE_COOLDOWN = 1.0  # seconds unable to gain the ball after being tackled
-STRIKE_COOLDOWN = 1.0  # seconds before the kicker can re-absorb their own strike
+STRIKE_COOLDOWN = 1.0  # seconds before the kicker can engage with the ball again
 COOLDOWN_ALPHA = 90  # draw opacity (0–255) while on cooldown (~35 %)
 JOY_DEAD_ZONE = 0.15  # ignore analogue stick values below this magnitude
 JOY_SWITCH_THRESHOLD = 0.7  # right-stick magnitude that triggers a player switch

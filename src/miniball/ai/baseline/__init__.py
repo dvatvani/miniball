@@ -130,7 +130,7 @@ class BaselineAI(BaseAI):
         self,
         teammates: list[PlayerState],
         opponents: list[PlayerState],
-        ball_loc: list[float],
+        ball_loc: tuple[float, float],
     ) -> dict[int, tuple[float, float]]:
         closest = min(teammates, key=lambda p: dist(p["location"], ball_loc))
 
@@ -151,7 +151,7 @@ class BaselineAI(BaseAI):
                     )
                     directions[p["number"]] = norm(tx - px, ty - py)
                 else:
-                    fp = self.formation.get(p["number"], [px, py])
+                    fp = self.formation.get(p["number"], (px, py))
                     directions[p["number"]] = norm(fp[0] - px, fp[1] - py)
 
         return directions

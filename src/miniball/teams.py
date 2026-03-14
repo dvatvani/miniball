@@ -31,7 +31,7 @@ class Team:
     ) -> None:
         self.name = name
         self.players = players if players is not None else list(DEFAULT_PLAYERS)
-        formation = {p.number: [p.x, p.y] for p in self.players}
+        formation = {p.number: (p.x, p.y) for p in self.players}
         self.ai = ai(formation=formation)
         assert len(self.players) == 5, "Team must have 5 players"
         assert all(isinstance(p, Player) for p in self.players), (

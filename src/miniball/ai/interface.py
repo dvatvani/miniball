@@ -40,13 +40,13 @@ State schema
                 "is_teammate": bool,
                 "has_ball":    bool,
                 "cooldown_timer": float, # seconds remaining on cooldown (0 = can receive ball)
-                "location":    [x, y], # standard pitch coords
+                "location":    (x, y), # standard pitch coords
             },
             ...
         ],
         "ball": {
-            "location":     [x, y],   # standard pitch coords
-            "velocity":     [vx, vy], # standard pitch units / s
+            "location":     (x, y),   # standard pitch coords
+            "velocity":     (vx, vy), # standard pitch units / s
         },
         "match_state": {
             "team_current_score":        int,
@@ -85,12 +85,12 @@ class PlayerState(TypedDict):
     is_teammate: bool
     has_ball: bool
     cooldown_timer: float  # seconds remaining on cooldown; 0 = can receive ball
-    location: list[float]  # standard pitch coords [x, y]
+    location: tuple[float, float]  # standard pitch coords (x, y)
 
 
 class BallState(TypedDict):
-    location: list[float]  # standard pitch coords [x, y]
-    velocity: list[float]  # standard pitch units / s [vx, vy]
+    location: tuple[float, float]  # standard pitch coords (x, y)
+    velocity: tuple[float, float]  # standard pitch units / s (vx, vy)
 
 
 class MatchState(TypedDict):
@@ -130,7 +130,7 @@ class BaseAI(ABC):
     used for both teams simultaneously if desired.
     """
 
-    def __init__(self, formation: dict[int, list[float]]) -> None:
+    def __init__(self, formation: dict[int, tuple[float, float]]) -> None:
         self.formation = formation
 
     @abstractmethod

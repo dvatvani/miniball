@@ -27,7 +27,7 @@ def _(teams_list):
             number=p.number,
             is_teammate=True,
             has_ball=False,
-            location=[p.x, p.y],
+            location=(p.x, p.y),
             cooldown_timer=0.0,
         )
         for p in teams_list[0].players
