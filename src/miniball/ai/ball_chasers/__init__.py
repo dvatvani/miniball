@@ -1,5 +1,5 @@
 from miniball.ai.interface import BaseAI, GameState, TeamActions
-from miniball.ai.utils import dist, goal_center, norm
+from miniball.ai.utils import dist, goal_center, relative_position
 
 
 class BallChasersAI(BaseAI):
@@ -10,11 +10,8 @@ class BallChasersAI(BaseAI):
     1. **Has the ball** → dribble straight toward the attacking goal;
        strike when within ``STRIKE_RANGE`` normalised units of the goal centre.
     2. **No ball / opposition has it** → press toward the ball at full speed.
-    3. **Teammate has the ball** → drift back toward home position to avoid
+    3. **Teammate has the ball** → drift back toward formation position to avoid
        crowding the ball carrier and leave space open.
-
-    Home positions are cached from each player's location on the first frame
-    so the AI naturally inherits whatever starting layout the game uses.
 
     Because the state is always normalised to attack right and expressed in
     standard pitch coordinates, this class contains no team-side, pixel, or
@@ -24,51 +21,49 @@ class BallChasersAI(BaseAI):
     STRIKE_RANGE: float = (
         28.0  # normalised units to goal centre at which the AI strikes
     )
-    HOME_DEADBAND: float = 2.0  # normalised units – don't move if already close to home
 
     def get_actions(self, state: GameState) -> TeamActions:
-        gx, gy = goal_center()
-        ball_loc = state["ball"]["location"]
+        ball_location = state["ball"]["location"]
 
         teammate_has_ball = any(
             p["is_teammate"] and p["has_ball"] for p in state["team"]
         )
 
         directions: dict[int, tuple[float, float]] = {}
-        ball_carrier_pid: int | None = None
+        ball_carrier_number: int | None = None
         strike = False
 
         for p in state["team"]:
-            pid = p["number"]
-            px, py = p["location"]
+            player_number = p["number"]
+            player_location = p["location"]
 
             if p["has_ball"]:
                 # ── Dribble toward goal; strike when close enough ───────────
-                directions[pid] = norm(gx - px, gy - py)
-                dist_to_goal = dist([px, py], [gx, gy])
-                ball_carrier_pid = pid
-                strike = dist_to_goal < self.STRIKE_RANGE
+                directions[player_number] = relative_position(
+                    player_location, goal_center()
+                )
+                ball_carrier_number = player_number
+                strike = dist(player_location, goal_center()) < self.STRIKE_RANGE
 
             elif teammate_has_ball:
-                # ── Drift back to home position to open up space ───────────
-                formation_location = self.formation.get(pid, (px, py))
-                if dist([px, py], formation_location) > self.HOME_DEADBAND:
-                    directions[pid] = norm(
-                        formation_location[0] - px, formation_location[1] - py
-                    )
-                else:
-                    directions[pid] = (0.0, 0.0)
+                # ── Drift back to formation position to open up space ────────
+                formation_location = self.formation.get(player_number, player_location)
+                directions[player_number] = relative_position(
+                    player_location, formation_location
+                )
 
             else:
                 # ── Press toward the ball ──────────────────────────────────
-                directions[pid] = norm(ball_loc[0] - px, ball_loc[1] - py)
+                directions[player_number] = relative_position(
+                    player_location, ball_location
+                )
 
         return {
             "actions": {
-                pid: {
+                player_number: {
                     "direction": direction,
-                    "strike": strike and pid == ball_carrier_pid,
+                    "strike": strike and player_number == ball_carrier_number,
                 }
-                for pid, direction in directions.items()
+                for player_number, direction in directions.items()
             }
         }

@@ -3,7 +3,13 @@ from collections.abc import Sequence
 import numpy as np
 
 from miniball.ai.interface import BaseAI, GameState, PlayerState, TeamActions
-from miniball.ai.utils import dist, goal_center, norm
+from miniball.ai.utils import (
+    dist,
+    goal_center,
+    norm,
+    player_closest_to_player,
+    relative_position,
+)
 from miniball.ai.utils.geometry import players_bounded_voronoi, players_in_polygon
 
 
@@ -13,7 +19,7 @@ class BaselineAI(BaseAI):
     In possession
     ─────────────
     All players move toward the centroid of their Voronoi cell (computed from
-    all ten players' current positions) to spread out and attempt to create space.
+    all ten players' current positions) to attempt to create space.
 
     The ball carrier's decision overrides the space-creation movement:
 
@@ -45,7 +51,6 @@ class BaselineAI(BaseAI):
     # ── Public interface ──────────────────────────────────────────────────────
 
     def get_actions(self, state: GameState) -> TeamActions:
-        gx, gy = goal_center()
         ball_loc = state["ball"]["location"]
         teammates = state["team"]
         opponents = state["opposition"]
@@ -59,7 +64,7 @@ class BaselineAI(BaseAI):
         if team_has_ball:
             assert ball_carrier is not None
             directions, strike = self._in_possession_actions(
-                ball_carrier, teammates, opponents, gx, gy
+                ball_carrier, teammates, opponents
             )
         else:
             directions = self._out_of_possession_actions(teammates, opponents, ball_loc)
@@ -82,8 +87,6 @@ class BaselineAI(BaseAI):
         ball_carrier: PlayerState,
         teammates: list[PlayerState],
         opponents: list[PlayerState],
-        gx: float,
-        gy: float,
     ) -> tuple[dict[int, tuple[float, float]], bool]:
         players = teammates + opponents
         vor = players_bounded_voronoi(players)
@@ -98,8 +101,10 @@ class BaselineAI(BaseAI):
         bx, by = ball_carrier["location"]
         strike = False
 
-        if dist([bx, by], [gx, gy]) <= self.STRIKE_RANGE:
-            directions[ball_carrier["number"]] = norm(gx - bx, gy - by)
+        if dist(ball_carrier["location"], goal_center()) <= self.STRIKE_RANGE:
+            directions[ball_carrier["number"]] = relative_position(
+                ball_carrier["location"], goal_center()
+            )
             strike = True
         else:
             forward_target = self._passing_lane_pass_target(
@@ -111,15 +116,19 @@ class BaselineAI(BaseAI):
             )
             if forward_target is not None:
                 tx, ty = forward_target["location"]
-                directions[ball_carrier["number"]] = norm(tx - bx, ty - by)
+                directions[ball_carrier["number"]] = relative_position(
+                    ball_carrier["location"], forward_target["location"]
+                )
                 strike = True
             elif under_pressure:
-                nearest_opp = min(
-                    opponents,
-                    key=lambda o: dist(ball_carrier["location"], o["location"]),
+                nearest_opp = player_closest_to_player(ball_carrier, opponents)
+                nearest_opp_relative_position = relative_position(
+                    ball_carrier["location"], nearest_opp["location"]
                 )
-                escape_dy = -10.0 if nearest_opp["location"][1] > by else 10.0
-                directions[ball_carrier["number"]] = (10.0, escape_dy)
+                directions[ball_carrier["number"]] = (
+                    10,
+                    -10 if nearest_opp_relative_position[1] > 0 else 10,
+                )
                 strike = True
 
         return directions, strike
