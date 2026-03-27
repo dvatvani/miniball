@@ -16,7 +16,11 @@ from miniball.ai.utils import (
     projected_ball_position_when_crossing_x,
     relative_position,
 )
-from miniball.config import BALL_DRAG, STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
+from miniball.config import (
+    GAME_ENGINE_BALL_DRAG,
+    STANDARD_PITCH_HEIGHT,
+    STANDARD_PITCH_WIDTH,
+)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -235,8 +239,8 @@ def test_projected_ball_position_matches_drag_formula():
     """Verify against the continuous-drag formula directly."""
     ball = make_ball(60.0, 40.0, vx=10.0, vy=0.0)
     t = 1.0
-    decay = math.exp(-BALL_DRAG * t)
-    factor = (1.0 - decay) / BALL_DRAG
+    decay = math.exp(-GAME_ENGINE_BALL_DRAG * t)
+    factor = (1.0 - decay) / GAME_ENGINE_BALL_DRAG
     expected_x = 60.0 + 10.0 * factor
     x, y = projected_ball_position(ball, t)
     assert x == pytest.approx(expected_x, rel=1e-6)
@@ -255,8 +259,8 @@ def test_projected_ball_position_ball_decelerates():
 def test_projected_ball_position_2d():
     ball = make_ball(50.0, 30.0, vx=6.0, vy=8.0)
     t = 0.5
-    decay = math.exp(-BALL_DRAG * t)
-    factor = (1.0 - decay) / BALL_DRAG
+    decay = math.exp(-GAME_ENGINE_BALL_DRAG * t)
+    factor = (1.0 - decay) / GAME_ENGINE_BALL_DRAG
     x, y = projected_ball_position(ball, t)
     assert x == pytest.approx(50.0 + 6.0 * factor, rel=1e-6)
     assert y == pytest.approx(30.0 + 8.0 * factor, rel=1e-6)

@@ -38,24 +38,23 @@ from miniball.ai import (
     TeamActions,
 )
 from miniball.config import (
-    BALL_DRAG,
-    BALL_RADIUS,
     C_TEAM_A,
     C_TEAM_B,
     GAME_DURATION,
+    GAME_ENGINE_BALL_DRAG,
+    GAME_ENGINE_BALL_RADIUS,
+    GAME_ENGINE_PLAYER_RADIUS,
+    GAME_ENGINE_PLAYER_SPEED,
+    GAME_ENGINE_STRIKE_SPEED,
     GOAL_DEPTH,
     GOAL_H,
-    MAX_BALL_SPEED,
     PITCH_B,
     PITCH_CX,
     PITCH_CY,
     PITCH_L,
     PITCH_R,
     PITCH_T,
-    PLAYER_RADIUS,
-    PLAYER_SPEED,
     STRIKE_COOLDOWN,
-    STRIKE_SPEED,
     TACKLE_COOLDOWN,
 )
 from miniball.coordinate_transformations import (
@@ -130,17 +129,12 @@ class Ball:
     def apply_impulse(self, ix: float, iy: float) -> None:
         self.vx += ix
         self.vy += iy
-        speed = math.hypot(self.vx, self.vy)
-        if speed > MAX_BALL_SPEED:
-            scale = MAX_BALL_SPEED / speed
-            self.vx *= scale
-            self.vy *= scale
 
     def update(self, dt: float) -> None:
         if self.possessed_by is not None:
             p = self.possessed_by
-            self.x = p.x + math.cos(p.facing) * PLAYER_RADIUS
-            self.y = p.y + math.sin(p.facing) * PLAYER_RADIUS
+            self.x = p.x + math.cos(p.facing) * GAME_ENGINE_PLAYER_RADIUS
+            self.y = p.y + math.sin(p.facing) * GAME_ENGINE_PLAYER_RADIUS
             self.vx = 0.0
             self.vy = 0.0
             return
@@ -148,32 +142,42 @@ class Ball:
         self.x += self.vx * dt
         self.y += self.vy * dt
 
-        drag_factor = max(0.0, 1.0 - BALL_DRAG * dt)
+        drag_factor = max(0.0, 1.0 - GAME_ENGINE_BALL_DRAG * dt)
         self.vx *= drag_factor
         self.vy *= drag_factor
 
         goal_lo = PITCH_CY - GOAL_H / 2
         goal_hi = PITCH_CY + GOAL_H / 2
 
-        if self.y - BALL_RADIUS < PITCH_B:
-            self.y = PITCH_B + BALL_RADIUS
+        if self.y - GAME_ENGINE_BALL_RADIUS < PITCH_B:
+            self.y = PITCH_B + GAME_ENGINE_BALL_RADIUS
             self.vy = abs(self.vy)
-        if self.y + BALL_RADIUS > PITCH_T:
-            self.y = PITCH_T - BALL_RADIUS
+        if self.y + GAME_ENGINE_BALL_RADIUS > PITCH_T:
+            self.y = PITCH_T - GAME_ENGINE_BALL_RADIUS
             self.vy = -abs(self.vy)
 
-        if self.x - BALL_RADIUS < PITCH_L and not (goal_lo <= self.y <= goal_hi):
-            self.x = PITCH_L + BALL_RADIUS
+        if self.x - GAME_ENGINE_BALL_RADIUS < PITCH_L and not (
+            goal_lo <= self.y <= goal_hi
+        ):
+            self.x = PITCH_L + GAME_ENGINE_BALL_RADIUS
             self.vx = abs(self.vx)
-        if self.x + BALL_RADIUS > PITCH_R and not (goal_lo <= self.y <= goal_hi):
-            self.x = PITCH_R - BALL_RADIUS
+        if self.x + GAME_ENGINE_BALL_RADIUS > PITCH_R and not (
+            goal_lo <= self.y <= goal_hi
+        ):
+            self.x = PITCH_R - GAME_ENGINE_BALL_RADIUS
             self.vx = -abs(self.vx)
 
-        if self.x - BALL_RADIUS < PITCH_L - GOAL_DEPTH and goal_lo <= self.y <= goal_hi:
-            self.x = PITCH_L - GOAL_DEPTH + BALL_RADIUS
+        if (
+            self.x - GAME_ENGINE_BALL_RADIUS < PITCH_L - GOAL_DEPTH
+            and goal_lo <= self.y <= goal_hi
+        ):
+            self.x = PITCH_L - GOAL_DEPTH + GAME_ENGINE_BALL_RADIUS
             self.vx = abs(self.vx)
-        if self.x + BALL_RADIUS > PITCH_R + GOAL_DEPTH and goal_lo <= self.y <= goal_hi:
-            self.x = PITCH_R + GOAL_DEPTH - BALL_RADIUS
+        if (
+            self.x + GAME_ENGINE_BALL_RADIUS > PITCH_R + GOAL_DEPTH
+            and goal_lo <= self.y <= goal_hi
+        ):
+            self.x = PITCH_R + GOAL_DEPTH - GAME_ENGINE_BALL_RADIUS
             self.vx = -abs(self.vx)
 
 
@@ -507,8 +511,8 @@ class MatchSimulation:
             if dx != 0 or dy != 0:
                 norm = math.hypot(dx, dy)
                 speed_frac = min(norm, 1.0)
-                p.x += (dx / norm) * PLAYER_SPEED * speed_frac * dt
-                p.y += (dy / norm) * PLAYER_SPEED * speed_frac * dt
+                p.x += (dx / norm) * GAME_ENGINE_PLAYER_SPEED * speed_frac * dt
+                p.y += (dy / norm) * GAME_ENGINE_PLAYER_SPEED * speed_frac * dt
                 p.facing = math.atan2(dy, dx)
             if player_action["strike"]:
                 self._handle_strike(p)
@@ -521,13 +525,13 @@ class MatchSimulation:
             return
         self.ball.possessed_by = None
         self.ball.x = player.x + math.cos(player.facing) * (
-            PLAYER_RADIUS + BALL_RADIUS + 2
+            GAME_ENGINE_PLAYER_RADIUS + GAME_ENGINE_BALL_RADIUS + 2
         )
         self.ball.y = player.y + math.sin(player.facing) * (
-            PLAYER_RADIUS + BALL_RADIUS + 2
+            GAME_ENGINE_PLAYER_RADIUS + GAME_ENGINE_BALL_RADIUS + 2
         )
-        self.ball.vx = math.cos(player.facing) * STRIKE_SPEED
-        self.ball.vy = math.sin(player.facing) * STRIKE_SPEED
+        self.ball.vx = math.cos(player.facing) * GAME_ENGINE_STRIKE_SPEED
+        self.ball.vy = math.sin(player.facing) * GAME_ENGINE_STRIKE_SPEED
         player.cooldown_timer = max(player.cooldown_timer, STRIKE_COOLDOWN)
 
     def _update_possession(self) -> None:
@@ -540,7 +544,7 @@ class MatchSimulation:
                 if not p.can_gain_possession:
                     continue
                 dist = math.hypot(p.x - possessor.x, p.y - possessor.y)
-                if dist < PLAYER_RADIUS * 2:
+                if dist < GAME_ENGINE_PLAYER_RADIUS * 2:
                     old = possessor
                     self.ball.possessed_by = p
                     old.cooldown_timer = TACKLE_COOLDOWN
@@ -550,7 +554,7 @@ class MatchSimulation:
                 if not p.can_gain_possession:
                     continue
                 dist = math.hypot(self.ball.x - p.x, self.ball.y - p.y)
-                if dist < PLAYER_RADIUS + BALL_RADIUS:
+                if dist < GAME_ENGINE_PLAYER_RADIUS + GAME_ENGINE_BALL_RADIUS:
                     self.ball.possessed_by = p
                     self.ball.vx = 0.0
                     self.ball.vy = 0.0
@@ -558,7 +562,7 @@ class MatchSimulation:
 
     def _resolve_player_collisions(self) -> None:
         players = self.all_players
-        min_dist = PLAYER_RADIUS * 2
+        min_dist = GAME_ENGINE_PLAYER_RADIUS * 2
         for i in range(len(players)):
             for j in range(i + 1, len(players)):
                 a, b = players[i], players[j]
@@ -573,17 +577,29 @@ class MatchSimulation:
 
     def _clamp_players(self) -> None:
         for p in self.all_players:
-            p.x = max(PITCH_L + PLAYER_RADIUS, min(PITCH_R - PLAYER_RADIUS, p.x))
-            p.y = max(PITCH_B + PLAYER_RADIUS, min(PITCH_T - PLAYER_RADIUS, p.y))
+            p.x = max(
+                PITCH_L + GAME_ENGINE_PLAYER_RADIUS,
+                min(PITCH_R - GAME_ENGINE_PLAYER_RADIUS, p.x),
+            )
+            p.y = max(
+                PITCH_B + GAME_ENGINE_PLAYER_RADIUS,
+                min(PITCH_T - GAME_ENGINE_PLAYER_RADIUS, p.y),
+            )
 
     def _check_goals(self) -> None:
         goal_lo = PITCH_CY - GOAL_H / 2
         goal_hi = PITCH_CY + GOAL_H / 2
 
-        if self.ball.x + BALL_RADIUS < PITCH_L and goal_lo <= self.ball.y <= goal_hi:
+        if (
+            self.ball.x + GAME_ENGINE_BALL_RADIUS < PITCH_L
+            and goal_lo <= self.ball.y <= goal_hi
+        ):
             self.score_b += 1
             self._trigger_goal_reset(conceding_team=self.team_a)
-        elif self.ball.x - BALL_RADIUS > PITCH_R and goal_lo <= self.ball.y <= goal_hi:
+        elif (
+            self.ball.x - GAME_ENGINE_BALL_RADIUS > PITCH_R
+            and goal_lo <= self.ball.y <= goal_hi
+        ):
             self.score_a += 1
             self._trigger_goal_reset(conceding_team=self.team_b)
 

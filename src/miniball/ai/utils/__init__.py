@@ -12,7 +12,11 @@ import math
 from collections.abc import Sequence
 
 from miniball.ai.interface import BallState, PlayerState
-from miniball.config import BALL_DRAG, STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
+from miniball.config import (
+    GAME_ENGINE_BALL_DRAG,
+    STANDARD_PITCH_HEIGHT,
+    STANDARD_PITCH_WIDTH,
+)
 
 
 def dist(a: Sequence[float], b: Sequence[float]) -> float:
@@ -67,9 +71,9 @@ def player_closest_to_player(
         players = [
             p
             for p in players
-            if (
-                (p["number"] != player["number"])
-                and (p["is_teammate"] == player["is_teammate"])
+            if not (
+                p["number"] == player["number"]
+                and p["is_teammate"] == player["is_teammate"]
             )
         ]
     return player_closest_to_point(players, player["location"])
@@ -103,11 +107,11 @@ def projected_ball_position(ball: BallState, t: float) -> tuple[float, float]:
     tuple[float, float]
         Predicted ``(x, y)`` position in standard pitch coordinates.
     """
-    if t <= 0.0 or BALL_DRAG <= 0.0:
+    if t <= 0.0 or GAME_ENGINE_BALL_DRAG <= 0.0:
         return ball["location"][0], ball["location"][1]
 
-    decay = math.exp(-BALL_DRAG * t)
-    factor = (1.0 - decay) / BALL_DRAG
+    decay = math.exp(-GAME_ENGINE_BALL_DRAG * t)
+    factor = (1.0 - decay) / GAME_ENGINE_BALL_DRAG
 
     x = ball["location"][0] + ball["velocity"][0] * factor
     y = ball["location"][1] + ball["velocity"][1] * factor

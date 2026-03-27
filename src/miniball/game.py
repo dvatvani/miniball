@@ -28,7 +28,6 @@ import polars as pl
 
 from miniball import match_stats
 from miniball.config import (
-    BALL_RADIUS,
     C_BALL,
     C_BALL_OUTLINE,
     C_CONTROLLED,
@@ -43,6 +42,8 @@ from miniball.config import (
     C_TEAM_A,
     C_TEAM_B,
     COOLDOWN_ALPHA,
+    GAME_ENGINE_BALL_RADIUS,
+    GAME_ENGINE_PLAYER_RADIUS,
     GOAL_DEPTH,
     GOAL_H,
     JOY_DEAD_ZONE,
@@ -53,7 +54,6 @@ from miniball.config import (
     PITCH_L,
     PITCH_R,
     PITCH_T,
-    PLAYER_RADIUS,
     SCREEN_H,
     SCREEN_W,
     STANDARD_PITCH_HEIGHT,
@@ -147,9 +147,11 @@ class FootballGame(arcade.Window):
         self._draw_hud()
 
     def _draw_ball(self) -> None:
-        arcade.draw_circle_filled(self.sim.ball.x, self.sim.ball.y, BALL_RADIUS, C_BALL)
+        arcade.draw_circle_filled(
+            self.sim.ball.x, self.sim.ball.y, GAME_ENGINE_BALL_RADIUS, C_BALL
+        )
         arcade.draw_circle_outline(
-            self.sim.ball.x, self.sim.ball.y, BALL_RADIUS, C_BALL_OUTLINE, 2
+            self.sim.ball.x, self.sim.ball.y, GAME_ENGINE_BALL_RADIUS, C_BALL_OUTLINE, 2
         )
 
     def _draw_player(
@@ -166,20 +168,26 @@ class FootballGame(arcade.Window):
             text_color = C_LINE
 
         if has_ball:
-            arcade.draw_circle_outline(p.x, p.y, PLAYER_RADIUS + 5, C_POSSESSION, 3)
+            arcade.draw_circle_outline(
+                p.x, p.y, GAME_ENGINE_PLAYER_RADIUS + 5, C_POSSESSION, 3
+            )
 
-        arcade.draw_circle_filled(p.x, p.y, PLAYER_RADIUS, fill_color)
-        arcade.draw_circle_outline(p.x, p.y, PLAYER_RADIUS, outline_color, 2)
+        arcade.draw_circle_filled(p.x, p.y, GAME_ENGINE_PLAYER_RADIUS, fill_color)
+        arcade.draw_circle_outline(
+            p.x, p.y, GAME_ENGINE_PLAYER_RADIUS, outline_color, 2
+        )
 
         if highlight:
-            arcade.draw_circle_outline(p.x, p.y, PLAYER_RADIUS + 2, C_CONTROLLED, 2)
+            arcade.draw_circle_outline(
+                p.x, p.y, GAME_ENGINE_PLAYER_RADIUS + 2, C_CONTROLLED, 2
+            )
 
         # Radial cooldown ring: sweeps counter-clockwise from 12 o'clock, so
         # the gap grows clockwise as the cooldown depletes.
         if p.on_cooldown:
             _max_cd = max(TACKLE_COOLDOWN, STRIKE_COOLDOWN)
             fraction = min(1.0, p.cooldown_timer / _max_cd)
-            _ring_r = PLAYER_RADIUS - 4  # just inside the player outline
+            _ring_r = GAME_ENGINE_PLAYER_RADIUS - 4  # just inside the player outline
             if fraction >= 1.0:
                 arcade.draw_circle_outline(p.x, p.y, _ring_r, C_COOLDOWN_RING, 3)
             elif fraction > 0.0:
