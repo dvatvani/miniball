@@ -11,6 +11,6 @@ class StationaryAI(BaseAI):
         return {
             "actions": {
                 p["number"]: {"direction": (0.0, 0.0), "strike": False}
-                for p in state["team"]
+                for p in state.team
             }
         }

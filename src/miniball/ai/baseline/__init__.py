@@ -7,7 +7,7 @@ from miniball.ai.utils import (
     dist,
     goal_center,
     norm,
-    player_closest_to_player,
+    player_closest_to_point,
     relative_position,
 )
 from miniball.ai.utils.geometry import players_bounded_voronoi, players_in_polygon
@@ -51,9 +51,9 @@ class BaselineAI(BaseAI):
     # ── Public interface ──────────────────────────────────────────────────────
 
     def get_actions(self, state: GameState) -> TeamActions:
-        ball_loc = state["ball"]["location"]
-        teammates = state["team"]
-        opponents = state["opposition"]
+        ball_loc = state.ball["location"]
+        teammates = state.team
+        opponents = state.opposition
 
         ball_carrier = next((p for p in teammates if p["has_ball"]), None)
         team_has_ball = ball_carrier is not None
@@ -121,7 +121,9 @@ class BaselineAI(BaseAI):
                 )
                 strike = True
             elif under_pressure:
-                nearest_opp = player_closest_to_player(ball_carrier, opponents)
+                nearest_opp = player_closest_to_point(
+                    opponents, ball_carrier["location"]
+                )
                 nearest_opp_relative_position = relative_position(
                     ball_carrier["location"], nearest_opp["location"]
                 )

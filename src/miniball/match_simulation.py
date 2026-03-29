@@ -483,17 +483,17 @@ class MatchSimulation:
             "match_time_seconds": GAME_DURATION - self._time_remaining,
         }
 
-        return {
-            "team": team,
-            "opposition": opposition,
-            "ball": {
+        return GameState(
+            team=team,
+            opposition=opposition,
+            ball={
                 "location": pos(self.ball.x, self.ball.y),
                 "velocity": global_delta_to_team(
                     self.ball.vx, self.ball.vy, is_home=is_home
                 ),
             },
-            "match_state": match_state,
-        }
+            match_state=match_state,
+        )
 
     def _apply_actions(
         self,
@@ -639,17 +639,17 @@ class MatchSimulation:
 
         rows: list[dict[str, object]] = []
         for frame_number, record in enumerate(self._history):
-            gbx, gby = record.state["ball"]["location"]
-            gbvx, gbvy = record.state["ball"]["velocity"]
-            score_a = record.state["match_state"]["team_current_score"]
-            score_b = record.state["match_state"]["opposition_current_score"]
-            match_time = record.state["match_state"]["match_time_seconds"]
+            gbx, gby = record.state.ball["location"]
+            gbvx, gbvy = record.state.ball["velocity"]
+            score_a = record.state.match_state["team_current_score"]
+            score_b = record.state.match_state["opposition_current_score"]
+            match_time = record.state.match_state["match_time_seconds"]
             t = record.game_time
 
             _null_action: PlayerAction = {"direction": (0.0, 0.0), "strike": False}
             hp = record.human_player
 
-            for player in record.state["team"]:  # team A – own frame = global
+            for player in record.state.team:  # team A – own frame = global
                 num = player["number"]
                 gx, gy = player["location"]
                 pa_a = record.actions_team_a["actions"].get(num, _null_action)
@@ -689,7 +689,7 @@ class MatchSimulation:
                     }
                 )
 
-            for player in record.state["opposition"]:  # team B
+            for player in record.state.opposition:  # team B
                 num = player["number"]
                 gx, gy = player["location"]
                 bx, by = global_to_team(gx, gy, is_home=False)

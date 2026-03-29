@@ -63,20 +63,16 @@ def player_closest_to_ball(players: list[PlayerState], ball: BallState) -> Playe
 def player_closest_to_player(
     player: PlayerState, players: list[PlayerState], ignore_self: bool = True
 ) -> PlayerState:
-    """Return the player in ``players`` closest to the other player.
+    """Return the same-team player in ``players`` closest to ``player``.
 
-    If ``ignore_self`` is True, the player themselves are not considered.
+    Only players whose ``is_teammate`` flag matches ``player``'s are
+    considered.  If ``ignore_self`` is ``True`` (the default), ``player``
+    themselves is also excluded.
     """
+    candidates = [p for p in players if p["is_teammate"] == player["is_teammate"]]
     if ignore_self:
-        players = [
-            p
-            for p in players
-            if not (
-                p["number"] == player["number"]
-                and p["is_teammate"] == player["is_teammate"]
-            )
-        ]
-    return player_closest_to_point(players, player["location"])
+        candidates = [p for p in candidates if p["number"] != player["number"]]
+    return player_closest_to_point(candidates, player["location"])
 
 
 def projected_ball_position(ball: BallState, t: float) -> tuple[float, float]:

@@ -23,17 +23,14 @@ class BallChasersAI(BaseAI):
     )
 
     def get_actions(self, state: GameState) -> TeamActions:
-        ball_location = state["ball"]["location"]
-
-        teammate_has_ball = any(
-            p["is_teammate"] and p["has_ball"] for p in state["team"]
-        )
+        ball_location = state.ball["location"]
+        teammate_has_ball = state.team_has_ball
 
         directions: dict[int, tuple[float, float]] = {}
         ball_carrier_number: int | None = None
         strike = False
 
-        for p in state["team"]:
+        for p in state.team:
             player_number = p["number"]
             player_location = p["location"]
 
