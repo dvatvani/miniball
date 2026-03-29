@@ -42,8 +42,6 @@ from miniball.config import (
     C_TEAM_A,
     C_TEAM_B,
     COOLDOWN_ALPHA,
-    GAME_ENGINE_BALL_RADIUS,
-    GAME_ENGINE_PLAYER_RADIUS,
     GOAL_DEPTH,
     GOAL_H,
     JOY_DEAD_ZONE,
@@ -54,7 +52,10 @@ from miniball.config import (
     PITCH_L,
     PITCH_R,
     PITCH_T,
+    PLAYER_RADIUS,
+    SCREEN_BALL_RADIUS,
     SCREEN_H,
+    SCREEN_PLAYER_RADIUS,
     SCREEN_W,
     STANDARD_PITCH_HEIGHT,
     STANDARD_PITCH_WIDTH,
@@ -62,6 +63,7 @@ from miniball.config import (
     TACKLE_COOLDOWN,
     TITLE,
 )
+from miniball.coordinate_transformations import global_to_screen
 from miniball.match_simulation import HumanInput, MatchSimulation, Player
 from miniball.teams import Team
 
@@ -149,16 +151,15 @@ class FootballGame(arcade.Window):
         self._draw_hud()
 
     def _draw_ball(self) -> None:
-        arcade.draw_circle_filled(
-            self.sim.ball.x, self.sim.ball.y, GAME_ENGINE_BALL_RADIUS, C_BALL
-        )
-        arcade.draw_circle_outline(
-            self.sim.ball.x, self.sim.ball.y, GAME_ENGINE_BALL_RADIUS, C_BALL_OUTLINE, 2
-        )
+        sx, sy = global_to_screen(self.sim.ball.x, self.sim.ball.y)
+        arcade.draw_circle_filled(sx, sy, SCREEN_BALL_RADIUS, C_BALL)
+        arcade.draw_circle_outline(sx, sy, SCREEN_BALL_RADIUS, C_BALL_OUTLINE, 2)
 
     def _draw_player(
         self, p: Player, highlight: bool = False, has_ball: bool = False
     ) -> None:
+        sx, sy = global_to_screen(p.x, p.y)
+
         if p.on_cooldown:
             r, g, b = p.color[:3]
             fill_color: tuple[int, ...] = (r, g, b, COOLDOWN_ALPHA)
@@ -171,17 +172,15 @@ class FootballGame(arcade.Window):
 
         if has_ball:
             arcade.draw_circle_outline(
-                p.x, p.y, GAME_ENGINE_PLAYER_RADIUS + 5, C_POSSESSION, 3
+                sx, sy, SCREEN_PLAYER_RADIUS + 5, C_POSSESSION, 3
             )
 
-        arcade.draw_circle_filled(p.x, p.y, GAME_ENGINE_PLAYER_RADIUS, fill_color)
-        arcade.draw_circle_outline(
-            p.x, p.y, GAME_ENGINE_PLAYER_RADIUS, outline_color, 2
-        )
+        arcade.draw_circle_filled(sx, sy, SCREEN_PLAYER_RADIUS, fill_color)
+        arcade.draw_circle_outline(sx, sy, SCREEN_PLAYER_RADIUS, outline_color, 2)
 
         if highlight:
             arcade.draw_circle_outline(
-                p.x, p.y, GAME_ENGINE_PLAYER_RADIUS + 2, C_CONTROLLED, 2
+                sx, sy, SCREEN_PLAYER_RADIUS + 2, C_CONTROLLED, 2
             )
 
         # Radial cooldown ring: sweeps counter-clockwise from 12 o'clock, so
@@ -189,13 +188,13 @@ class FootballGame(arcade.Window):
         if p.on_cooldown:
             _max_cd = max(TACKLE_COOLDOWN, STRIKE_COOLDOWN)
             fraction = min(1.0, p.cooldown_timer / _max_cd)
-            _ring_r = GAME_ENGINE_PLAYER_RADIUS - 4  # just inside the player outline
+            _ring_r = SCREEN_PLAYER_RADIUS - 4
             if fraction >= 1.0:
-                arcade.draw_circle_outline(p.x, p.y, _ring_r, C_COOLDOWN_RING, 3)
+                arcade.draw_circle_outline(sx, sy, _ring_r, C_COOLDOWN_RING, 3)
             elif fraction > 0.0:
                 arcade.draw_arc_outline(
-                    p.x,
-                    p.y,
+                    sx,
+                    sy,
                     _ring_r * 2,
                     _ring_r * 2,
                     C_COOLDOWN_RING,
@@ -206,8 +205,8 @@ class FootballGame(arcade.Window):
 
         arcade.draw_text(
             str(p.number),
-            p.x,
-            p.y,
+            sx,
+            sy,
             text_color,
             font_size=11,
             anchor_x="center",
@@ -220,23 +219,25 @@ class FootballGame(arcade.Window):
         dx = math.cos(p.facing)
         dy = math.sin(p.facing)
 
-        start_x = p.x + dx * GAME_ENGINE_PLAYER_RADIUS
-        start_y = p.y + dy * GAME_ENGINE_PLAYER_RADIUS
+        gx = p.x + dx * PLAYER_RADIUS
+        gy = p.y + dy * PLAYER_RADIUS
 
         t_candidates: list[float] = []
         if abs(dx) > 1e-9:
-            t_candidates.append(((PITCH_R if dx > 0 else PITCH_L) - start_x) / dx)
+            t_candidates.append(((STANDARD_PITCH_WIDTH if dx > 0 else 0) - gx) / dx)
         if abs(dy) > 1e-9:
-            t_candidates.append(((PITCH_T if dy > 0 else PITCH_B) - start_y) / dy)
+            t_candidates.append(((STANDARD_PITCH_HEIGHT if dy > 0 else 0) - gy) / dy)
 
         if not t_candidates:
             return
 
         t = min(tc for tc in t_candidates if tc > 0)
-        end_x = start_x + dx * t
-        end_y = start_y + dy * t
+        end_gx = gx + dx * t
+        end_gy = gy + dy * t
 
-        arcade.draw_line(start_x, start_y, end_x, end_y, (255, 255, 255, 50), 2)
+        start_sx, start_sy = global_to_screen(gx, gy)
+        end_sx, end_sy = global_to_screen(end_gx, end_gy)
+        arcade.draw_line(start_sx, start_sy, end_sx, end_sy, (255, 255, 255, 50), 2)
 
     def _draw_pitch(self) -> None:
         lw = 2
@@ -759,7 +760,8 @@ class FootballGame(arcade.Window):
 
         The teammate with the smallest angular difference between the flick
         direction and the vector from the current controlled player to that
-        teammate is selected.
+        teammate is selected.  Positions are converted to screen space so that
+        the angular comparison matches the joystick's screen-oriented axes.
         """
         if self._human_team is None or self._controlled_idx is None:
             return
@@ -768,14 +770,15 @@ class FootballGame(arcade.Window):
             return
 
         flick_angle = math.atan2(dy, dx)
+        cx, cy = global_to_screen(current.x, current.y)
         best_idx: int | None = None
         best_diff = float("inf")
 
         for i, p in enumerate(self._human_team):
             if p is current:
                 continue
-            angle_to = math.atan2(p.y - current.y, p.x - current.x)
-            # Wrap angular difference to [-π, π]
+            px, py = global_to_screen(p.x, p.y)
+            angle_to = math.atan2(py - cy, px - cx)
             diff = abs(
                 math.atan2(
                     math.sin(angle_to - flick_angle), math.cos(angle_to - flick_angle)

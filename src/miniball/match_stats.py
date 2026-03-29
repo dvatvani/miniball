@@ -39,9 +39,7 @@ from __future__ import annotations
 import polars as pl
 
 from miniball.config import (
-    GOAL_H,
-    PITCH_B,
-    PITCH_T,
+    STANDARD_GOAL_HEIGHT,
     STANDARD_PITCH_HEIGHT,
     STANDARD_PITCH_WIDTH,
 )
@@ -89,9 +87,8 @@ def strike_stats(df: pl.DataFrame) -> pl.DataFrame:
     goal at x = 120).  The ``ball_x``/``ball_y`` and ``action_dx``/``action_dy``
     columns in the history DataFrame already carry this convention.
     """
-    pitch_h_px: float = PITCH_T - PITCH_B
-    goal_half_h = (GOAL_H / 2) * STANDARD_PITCH_HEIGHT / pitch_h_px
-    goal_center_y = STANDARD_PITCH_HEIGHT / 2  # 40.0
+    goal_half_h = STANDARD_GOAL_HEIGHT / 2
+    goal_center_y = STANDARD_PITCH_HEIGHT / 2
     goal_lo = goal_center_y - goal_half_h
     goal_hi = goal_center_y + goal_half_h
     shot_y_lo = goal_center_y - 2 * goal_half_h

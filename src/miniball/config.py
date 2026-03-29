@@ -18,9 +18,7 @@ STANDARD_GOAL_DEPTH = 4  # how far the goal box extends behind the goal line
 PLAYER_RADIUS = 2.0
 BALL_RADIUS = 1.0
 PLAYER_SPEED = 12  # normalised units / s
-BALL_DRAG = (
-    0.07  # speed loss, normalised units / s per second (free ball, linear model)
-)
+BALL_DRAG = 7 / 12  # drag coefficient (1/s): v *= (1 − BALL_DRAG · dt) each frame
 STRIKE_SPEED = 60  # normalised units / s on a strike
 GAME_DURATION = 120.0  # seconds per half (full game = one period)
 TACKLE_COOLDOWN = 1.0  # seconds unable to gain the ball after being tackled
@@ -43,12 +41,9 @@ GOAL_DEPTH = (PITCH_R - PITCH_L) * (
     STANDARD_GOAL_DEPTH / STANDARD_PITCH_WIDTH
 )  # how far the goal box extends behind the goal line
 
-# ── Physics / timings ────────────────────────────────────────────────────────
-GAME_ENGINE_PLAYER_RADIUS = (PITCH_R - PITCH_L) * (PLAYER_RADIUS / STANDARD_PITCH_WIDTH)
-GAME_ENGINE_BALL_RADIUS = (PITCH_R - PITCH_L) * (BALL_RADIUS / STANDARD_PITCH_WIDTH)
-GAME_ENGINE_PLAYER_SPEED = (PITCH_R - PITCH_L) * (PLAYER_SPEED / STANDARD_PITCH_WIDTH)
-GAME_ENGINE_BALL_DRAG = (PITCH_R - PITCH_L) * (BALL_DRAG / STANDARD_PITCH_WIDTH)
-GAME_ENGINE_STRIKE_SPEED = (PITCH_R - PITCH_L) * (STRIKE_SPEED / STANDARD_PITCH_WIDTH)
+# ── Screen-space rendering sizes ──────────────────────────────────────────────
+SCREEN_PLAYER_RADIUS = (PITCH_R - PITCH_L) * (PLAYER_RADIUS / STANDARD_PITCH_WIDTH)
+SCREEN_BALL_RADIUS = (PITCH_R - PITCH_L) * (BALL_RADIUS / STANDARD_PITCH_WIDTH)
 
 # ── Colours ──────────────────────────────────────────────────────────────────
 C_GRASS = (34, 139, 34)
