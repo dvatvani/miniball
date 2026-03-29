@@ -502,18 +502,25 @@ class MatchSimulation:
         dt: float,
         is_home: bool = True,
     ) -> None:
-        """Move and optionally strike for each player according to actions."""
+        """Move and optionally strike for each player according to actions.
+
+        The ``direction`` field is treated as a desired displacement vector in
+        standard pitch coordinates.  The engine clamps the actual movement to
+        ``PLAYER_SPEED * dt``; vectors shorter than that are applied as-is so
+        that players can make fine adjustments without overshooting.
+        """
         for p in players:
             player_action = actions.get(p.number)
             if player_action is None:
                 continue
             dx, dy = player_action["direction"]
             dx, dy = team_delta_to_global(dx, dy, is_home=is_home)
-            if dx != 0 or dy != 0:
-                norm = math.hypot(dx, dy)
-                speed_frac = min(norm, 1.0)
-                p.x += (dx / norm) * PLAYER_SPEED * speed_frac * dt
-                p.y += (dy / norm) * PLAYER_SPEED * speed_frac * dt
+            magnitude = math.hypot(dx, dy)
+            if magnitude > 0:
+                max_dist = PLAYER_SPEED * dt
+                scale = min(1.0, max_dist / magnitude)
+                p.x += dx * scale
+                p.y += dy * scale
                 p.facing = math.atan2(dy, dx)
             if player_action["strike"]:
                 self._handle_strike(p)

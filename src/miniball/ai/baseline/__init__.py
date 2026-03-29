@@ -3,7 +3,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from miniball.ai.interface import BaseAI, GameState, PlayerState, TeamActions
-from miniball.ai.utils import dist, goal_center, norm, player_closest_to_point
+from miniball.ai.utils import dist, goal_center, player_closest_to_point
 from miniball.ai.utils.geometry import players_bounded_voronoi, players_in_polygon
 
 
@@ -80,7 +80,7 @@ class BaselineAI(BaseAI):
         directions: dict[int, tuple[float, float]] = {}
         for i, p in enumerate(state.team):
             cx, cy = centroids[i]
-            directions[p.number] = norm(cx - p.location[0], cy - p.location[1])
+            directions[p.number] = (cx - p.location[0], cy - p.location[1])
 
         strike = False
 
@@ -140,7 +140,7 @@ class BaselineAI(BaseAI):
                     ty = ball_loc[1] + self.COVERAGE_FRACTION * (
                         target.location[1] - ball_loc[1]
                     )
-                    directions[p.number] = norm(tx - p.location[0], ty - p.location[1])
+                    directions[p.number] = (tx - p.location[0], ty - p.location[1])
                 else:
                     fp = self.formation.get(p.number, p.location)
                     directions[p.number] = p.direction_to(fp)

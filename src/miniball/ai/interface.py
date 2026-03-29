@@ -77,9 +77,9 @@ State API
 Action schema
 ─────────────
     PlayerAction = {
-        "direction": (dx, dy),  # desired direction in standard pitch coords;
-                                # magnitude used as speed fraction (0–1),
-                                # clipped to 1 if larger
+        "direction": (dx, dy),  # desired displacement in standard pitch coords;
+                                # clamped to PLAYER_SPEED * dt per frame — smaller
+                                # vectors move the player by exactly that amount
         "strike":    bool,      # request to strike the ball; ignored if player has no ball
     }
 
@@ -133,11 +133,12 @@ class PlayerState:
     def direction_to(
         self, target: PlayerState | Sequence[float]
     ) -> tuple[float, float]:
-        """Unnormalised displacement vector from this player toward ``target``.
+        """Displacement vector from this player toward ``target``.
 
-        The magnitude equals the distance; pass it directly as a
-        ``PlayerAction`` direction and the engine will clip it to speed 1
-        when the player is more than 1 unit away.
+        The magnitude equals the distance to ``target``.  Pass the result
+        directly as a ``PlayerAction`` direction: the engine will move the
+        player at full speed when the distance exceeds ``PLAYER_SPEED * dt``,
+        or by exactly this displacement when the player is already close.
         """
         point = target.location if isinstance(target, PlayerState) else target
         return (point[0] - self.location[0], point[1] - self.location[1])
