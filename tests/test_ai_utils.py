@@ -10,6 +10,7 @@ from miniball.ai.utils import (
     goal_center,
     norm,
     player_closest_to_ball,
+    player_closest_to_player,
     player_closest_to_point,
     projected_ball_position,
     projected_ball_position_when_crossing_x,
@@ -167,6 +168,51 @@ def test_player_closest_to_ball_uses_ball_location():
     ]
     result = player_closest_to_ball(players, ball)
     assert result["number"] == 2
+
+
+# ── player_closest_to_player ─────────────────────────────────────────────────
+
+
+def test_player_closest_to_player_ignores_self_by_default():
+    """With ignore_self=True (default), the player's own entry is excluded."""
+    players = [
+        make_player(1, 60.0, 40.0),  # the reference player
+        make_player(2, 61.0, 40.0),  # closest other teammate
+        make_player(3, 90.0, 70.0),
+    ]
+    result = player_closest_to_player(players[0], players)
+    assert result["number"] == 2
+
+
+def test_player_closest_to_player_include_self():
+    """With ignore_self=False, the player can be returned as their own nearest."""
+    players = [
+        make_player(1, 60.0, 40.0),
+        make_player(2, 90.0, 70.0),
+    ]
+    result = player_closest_to_player(players[0], players, ignore_self=False)
+    assert result["number"] == 1
+
+
+def test_player_closest_to_player_includes_opponents_when_in_list():
+    """Opponents in the list are not filtered out — caller controls the pool."""
+    ref = make_player(1, 60.0, 40.0, is_teammate=True)
+    opponent_nearby = make_player(2, 61.0, 40.0, is_teammate=False)
+    teammate_far = make_player(3, 90.0, 70.0, is_teammate=True)
+    result = player_closest_to_player(ref, [ref, opponent_nearby, teammate_far])
+    assert result["number"] == 2  # nearest player regardless of team
+
+
+def test_player_closest_to_player_teammates_only_when_filtered():
+    """Passing only teammates preserves the old team-scoped behaviour."""
+    ref = make_player(1, 60.0, 40.0, is_teammate=True)
+    opponent_nearby = make_player(2, 61.0, 40.0, is_teammate=False)
+    teammate_far = make_player(3, 90.0, 70.0, is_teammate=True)
+    teammates = [p for p in [ref, opponent_nearby, teammate_far] if p["is_teammate"]]
+    result = player_closest_to_player(ref, teammates)
+    assert (
+        result["number"] == 3
+    )  # opponent excluded by caller; teammate_far is only option
 
 
 # ── projected_ball_position ───────────────────────────────────────────────────

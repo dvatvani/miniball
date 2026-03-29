@@ -55,21 +55,18 @@ class BaselineAI(BaseAI):
         teammates = state.team
         opponents = state.opposition
 
-        ball_carrier = next((p for p in teammates if p["has_ball"]), None)
-        team_has_ball = ball_carrier is not None
-
         directions: dict[int, tuple[float, float]] = {}
         strike = False
 
-        if team_has_ball:
-            assert ball_carrier is not None
-            directions, strike = self._in_possession_actions(
-                ball_carrier, teammates, opponents
-            )
+        if state.team_has_ball:
+            assert state.ball_carrier is not None
+            directions, strike = self._in_possession_actions(state.ball_carrier, state)
         else:
             directions = self._out_of_possession_actions(teammates, opponents, ball_loc)
 
-        carrier_num = ball_carrier["number"] if ball_carrier is not None else None
+        carrier_num = (
+            state.ball_carrier["number"] if state.ball_carrier is not None else None
+        )
         return {
             "actions": {
                 pid: {
@@ -85,15 +82,13 @@ class BaselineAI(BaseAI):
     def _in_possession_actions(
         self,
         ball_carrier: PlayerState,
-        teammates: list[PlayerState],
-        opponents: list[PlayerState],
+        state: GameState,
     ) -> tuple[dict[int, tuple[float, float]], bool]:
-        players = teammates + opponents
-        vor = players_bounded_voronoi(players)
+        vor = players_bounded_voronoi(state.all_players)
         centroids = vor.region_centroids
 
         directions: dict[int, tuple[float, float]] = {}
-        for i, p in enumerate(teammates):
+        for i, p in enumerate(state.team):
             cx, cy = centroids[i]
             px, py = p["location"]
             directions[p["number"]] = norm(cx - px, cy - py)
@@ -108,11 +103,11 @@ class BaselineAI(BaseAI):
             strike = True
         else:
             forward_target = self._passing_lane_pass_target(
-                ball_carrier, teammates, opponents, min_x=bx
+                ball_carrier, state.team, state.opposition, min_x=bx
             )
             under_pressure = any(
                 dist(ball_carrier["location"], opp["location"]) <= self.PRESSURE_RANGE
-                for opp in opponents
+                for opp in state.opposition
             )
             if forward_target is not None:
                 tx, ty = forward_target["location"]
@@ -122,7 +117,7 @@ class BaselineAI(BaseAI):
                 strike = True
             elif under_pressure:
                 nearest_opp = player_closest_to_point(
-                    opponents, ball_carrier["location"]
+                    state.opposition, ball_carrier["location"]
                 )
                 nearest_opp_relative_position = relative_position(
                     ball_carrier["location"], nearest_opp["location"]

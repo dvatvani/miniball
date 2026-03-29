@@ -12,11 +12,7 @@ import math
 from collections.abc import Sequence
 
 from miniball.ai.interface import BallState, PlayerState
-from miniball.config import (
-    BALL_DRAG,
-    STANDARD_PITCH_HEIGHT,
-    STANDARD_PITCH_WIDTH,
-)
+from miniball.config import BALL_DRAG, STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
 
 
 def dist(a: Sequence[float], b: Sequence[float]) -> float:
@@ -63,15 +59,25 @@ def player_closest_to_ball(players: list[PlayerState], ball: BallState) -> Playe
 def player_closest_to_player(
     player: PlayerState, players: list[PlayerState], ignore_self: bool = True
 ) -> PlayerState:
-    """Return the same-team player in ``players`` closest to ``player``.
+    """Return the player in ``players`` closest to ``player``.
 
-    Only players whose ``is_teammate`` flag matches ``player``'s are
-    considered.  If ``ignore_self`` is ``True`` (the default), ``player``
-    themselves is also excluded.
+    If ``ignore_self`` is ``True`` (the default), the entry in ``players``
+    matching ``player`` by both team and number is excluded.  No other
+    filtering is applied, so passing a mixed list of teammates and opponents
+    will find the nearest regardless of team.
     """
-    candidates = [p for p in players if p["is_teammate"] == player["is_teammate"]]
-    if ignore_self:
-        candidates = [p for p in candidates if p["number"] != player["number"]]
+    candidates = (
+        [
+            p
+            for p in players
+            if not (
+                p["number"] == player["number"]
+                and p["is_teammate"] == player["is_teammate"]
+            )
+        ]
+        if ignore_self
+        else list(players)
+    )
     return player_closest_to_point(candidates, player["location"])
 
 
