@@ -44,11 +44,9 @@ class BallChasersAI(BaseAI):
                 directions[p.number] = p.direction_to(state.ball.location)
 
         return {
-            "actions": {
-                player_number: {
-                    "direction": direction,
-                    "strike": strike and player_number == ball_carrier_number,
-                }
-                for player_number, direction in directions.items()
+            player_number: {
+                "direction": direction,
+                "strike": strike and player_number == ball_carrier_number,
             }
+            for player_number, direction in directions.items()
         }

@@ -60,13 +60,11 @@ class BaselineAI(BaseAI):
             state.ball_carrier.number if state.ball_carrier is not None else None
         )
         return {
-            "actions": {
-                pid: {
-                    "direction": direction,
-                    "strike": strike and pid == carrier_num,
-                }
-                for pid, direction in directions.items()
+            pid: {
+                "direction": direction,
+                "strike": strike and pid == carrier_num,
             }
+            for pid, direction in directions.items()
         }
 
     # ── In-possession helpers ─────────────────────────────────────────────────

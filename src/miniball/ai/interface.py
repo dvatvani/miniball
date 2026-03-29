@@ -84,10 +84,8 @@ Action schema
     }
 
     TeamActions = {
-        "actions": {
-            player_number: PlayerAction,  # one entry per player; omitted players stand still
-            ...
-        }
+        player_number: PlayerAction,  # one entry per player; omitted players stand still
+        ...
     }
 """
 
@@ -336,10 +334,9 @@ class PlayerAction(TypedDict):
     strike: bool  # request to strike the ball; only meaningful for the player who has the ball
 
 
-class TeamActions(TypedDict):
-    actions: dict[
-        int, PlayerAction
-    ]  # player number → per-player action; omitted players stand still
+TeamActions = dict[
+    int, PlayerAction
+]  # player number → action; omitted players stand still
 
 
 # ── Abstract base ─────────────────────────────────────────────────────────────

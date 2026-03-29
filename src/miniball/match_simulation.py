@@ -435,7 +435,7 @@ class MatchSimulation:
                 human_input.direction[1],
                 is_home=is_home_team,
             )
-            actions["actions"][human_input.player_number] = {
+            actions[human_input.player_number] = {
                 "direction": (dx, dy),
                 "strike": human_input.strike,
             }
@@ -504,7 +504,7 @@ class MatchSimulation:
     ) -> None:
         """Move and optionally strike for each player according to actions."""
         for p in players:
-            player_action = actions["actions"].get(p.number)
+            player_action = actions.get(p.number)
             if player_action is None:
                 continue
             dx, dy = player_action["direction"]
@@ -652,7 +652,7 @@ class MatchSimulation:
             for player in record.state.team:  # team A – own frame = global
                 num = player.number
                 gx, gy = player.location
-                pa_a = record.actions_team_a["actions"].get(num, _null_action)
+                pa_a = record.actions_team_a.get(num, _null_action)
                 dx, dy = pa_a["direction"]
                 rows.append(
                     {
@@ -693,7 +693,7 @@ class MatchSimulation:
                 num = player.number
                 gx, gy = player.location
                 bx, by = global_to_team(gx, gy, is_home=False)
-                pa_b = record.actions_team_b["actions"].get(num, _null_action)
+                pa_b = record.actions_team_b.get(num, _null_action)
                 dx_b, dy_b = pa_b["direction"]
                 adx_g, ady_g = team_delta_to_global(dx_b, dy_b, is_home=False)
                 bbx, bby = global_to_team(gbx, gby, is_home=False)
