@@ -137,6 +137,8 @@ class FootballGame(arcade.Window):
             self._draw_stats_screen()
             return
         self._draw_pitch()
+        if self._controlled is not None:
+            self._draw_aim_line(self._controlled)
         self._draw_ball()
         for p in self.sim.all_players:
             self._draw_player(
@@ -212,6 +214,29 @@ class FootballGame(arcade.Window):
             anchor_y="center",
             bold=True,
         )
+
+    def _draw_aim_line(self, p: Player) -> None:
+        """Draw a faint directional guide from the controlled player to the pitch edge."""
+        dx = math.cos(p.facing)
+        dy = math.sin(p.facing)
+
+        start_x = p.x + dx * GAME_ENGINE_PLAYER_RADIUS
+        start_y = p.y + dy * GAME_ENGINE_PLAYER_RADIUS
+
+        t_candidates: list[float] = []
+        if abs(dx) > 1e-9:
+            t_candidates.append(((PITCH_R if dx > 0 else PITCH_L) - start_x) / dx)
+        if abs(dy) > 1e-9:
+            t_candidates.append(((PITCH_T if dy > 0 else PITCH_B) - start_y) / dy)
+
+        if not t_candidates:
+            return
+
+        t = min(tc for tc in t_candidates if tc > 0)
+        end_x = start_x + dx * t
+        end_y = start_y + dy * t
+
+        arcade.draw_line(start_x, start_y, end_x, end_y, (255, 255, 255, 50), 2)
 
     def _draw_pitch(self) -> None:
         lw = 2
