@@ -53,7 +53,7 @@ def bounded_voronoi(
 
 
 def players_bounded_voronoi(players: list[PlayerState]):
-    points = np.array([p["location"] for p in players], dtype=float)
+    points = np.array([p.location for p in players], dtype=float)
     return bounded_voronoi(points)
 
 
@@ -98,7 +98,7 @@ def location_in_polygon(location: Sequence[float], polygon: np.ndarray) -> bool:
 
 def player_in_polygon(player: PlayerState, polygon: np.ndarray) -> bool:
     """Return ``True`` if the player's location is inside ``polygon``."""
-    return location_in_polygon(player["location"], polygon)
+    return location_in_polygon(player.location, polygon)
 
 
 def players_in_polygon(

@@ -1,5 +1,5 @@
 from miniball.ai.interface import BaseAI, GameState, TeamActions
-from miniball.ai.utils import dist, goal_center, relative_position
+from miniball.ai.utils import goal_center
 
 
 class BallChasersAI(BaseAI):
@@ -23,37 +23,25 @@ class BallChasersAI(BaseAI):
     )
 
     def get_actions(self, state: GameState) -> TeamActions:
-        ball_location = state.ball["location"]
-        teammate_has_ball = state.team_has_ball
-
         directions: dict[int, tuple[float, float]] = {}
         ball_carrier_number: int | None = None
         strike = False
 
         for p in state.team:
-            player_number = p["number"]
-            player_location = p["location"]
-
-            if p["has_ball"]:
+            if p.has_ball:
                 # ── Dribble toward goal; strike when close enough ───────────
-                directions[player_number] = relative_position(
-                    player_location, goal_center()
-                )
-                ball_carrier_number = player_number
-                strike = dist(player_location, goal_center()) < self.STRIKE_RANGE
+                directions[p.number] = p.direction_to(goal_center())
+                ball_carrier_number = p.number
+                strike = p.dist_to(goal_center()) < self.STRIKE_RANGE
 
-            elif teammate_has_ball:
+            elif state.team_has_ball:
                 # ── Drift back to formation position to open up space ────────
-                formation_location = self.formation.get(player_number, player_location)
-                directions[player_number] = relative_position(
-                    player_location, formation_location
-                )
+                formation_location = self.formation.get(p.number, p.location)
+                directions[p.number] = p.direction_to(formation_location)
 
             else:
                 # ── Press toward the ball ──────────────────────────────────
-                directions[player_number] = relative_position(
-                    player_location, ball_location
-                )
+                directions[p.number] = p.direction_to(state.ball.location)
 
         return {
             "actions": {

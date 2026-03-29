@@ -3,13 +3,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from miniball.ai.interface import BaseAI, GameState, PlayerState, TeamActions
-from miniball.ai.utils import (
-    dist,
-    goal_center,
-    norm,
-    player_closest_to_point,
-    relative_position,
-)
+from miniball.ai.utils import dist, goal_center, norm, player_closest_to_point
 from miniball.ai.utils.geometry import players_bounded_voronoi, players_in_polygon
 
 
@@ -51,10 +45,6 @@ class BaselineAI(BaseAI):
     # ── Public interface ──────────────────────────────────────────────────────
 
     def get_actions(self, state: GameState) -> TeamActions:
-        ball_loc = state.ball["location"]
-        teammates = state.team
-        opponents = state.opposition
-
         directions: dict[int, tuple[float, float]] = {}
         strike = False
 
@@ -62,10 +52,12 @@ class BaselineAI(BaseAI):
             assert state.ball_carrier is not None
             directions, strike = self._in_possession_actions(state.ball_carrier, state)
         else:
-            directions = self._out_of_possession_actions(teammates, opponents, ball_loc)
+            directions = self._out_of_possession_actions(
+                state.team, state.opposition, state.ball.location
+            )
 
         carrier_num = (
-            state.ball_carrier["number"] if state.ball_carrier is not None else None
+            state.ball_carrier.number if state.ball_carrier is not None else None
         )
         return {
             "actions": {
@@ -90,41 +82,37 @@ class BaselineAI(BaseAI):
         directions: dict[int, tuple[float, float]] = {}
         for i, p in enumerate(state.team):
             cx, cy = centroids[i]
-            px, py = p["location"]
-            directions[p["number"]] = norm(cx - px, cy - py)
+            directions[p.number] = norm(cx - p.location[0], cy - p.location[1])
 
-        bx, by = ball_carrier["location"]
         strike = False
 
-        if dist(ball_carrier["location"], goal_center()) <= self.STRIKE_RANGE:
-            directions[ball_carrier["number"]] = relative_position(
-                ball_carrier["location"], goal_center()
-            )
+        if ball_carrier.dist_to(goal_center()) <= self.STRIKE_RANGE:
+            directions[ball_carrier.number] = ball_carrier.direction_to(goal_center())
             strike = True
         else:
             forward_target = self._passing_lane_pass_target(
-                ball_carrier, state.team, state.opposition, min_x=bx
+                ball_carrier,
+                state.team,
+                state.opposition,
+                min_x=ball_carrier.location[0],
             )
             under_pressure = any(
-                dist(ball_carrier["location"], opp["location"]) <= self.PRESSURE_RANGE
+                ball_carrier.dist_to(opp) <= self.PRESSURE_RANGE
                 for opp in state.opposition
             )
             if forward_target is not None:
-                tx, ty = forward_target["location"]
-                directions[ball_carrier["number"]] = relative_position(
-                    ball_carrier["location"], forward_target["location"]
+                directions[ball_carrier.number] = ball_carrier.direction_to(
+                    forward_target
                 )
                 strike = True
             elif under_pressure:
                 nearest_opp = player_closest_to_point(
-                    state.opposition, ball_carrier["location"]
+                    state.opposition, ball_carrier.location
                 )
-                nearest_opp_relative_position = relative_position(
-                    ball_carrier["location"], nearest_opp["location"]
-                )
-                directions[ball_carrier["number"]] = (
+                nearest_opp_dy = nearest_opp.location[1] - ball_carrier.location[1]
+                directions[ball_carrier.number] = (
                     10,
-                    -10 if nearest_opp_relative_position[1] > 0 else 10,
+                    -10 if nearest_opp_dy > 0 else 10,
                 )
                 strike = True
 
@@ -138,27 +126,26 @@ class BaselineAI(BaseAI):
         opponents: list[PlayerState],
         ball_loc: tuple[float, float],
     ) -> dict[int, tuple[float, float]]:
-        closest = min(teammates, key=lambda p: dist(p["location"], ball_loc))
+        closest = min(teammates, key=lambda p: p.dist_to(ball_loc))
 
         directions: dict[int, tuple[float, float]] = {}
         for p in teammates:
-            px, py = p["location"]
-            if p["number"] == closest["number"]:
-                directions[p["number"]] = norm(ball_loc[0] - px, ball_loc[1] - py)
+            if p.number == closest.number:
+                directions[p.number] = p.direction_to(ball_loc)
             else:
-                owned = self._zonal_opponents(p["number"], opponents)
-                if owned and p["number"] != 1:  # Prevent GK from marking anyone
-                    target = min(owned, key=lambda o: o["location"][0])
+                owned = self._zonal_opponents(p.number, opponents)
+                if owned and p.number != 1:  # Prevent GK from marking anyone
+                    target = min(owned, key=lambda o: o.location[0])
                     tx = ball_loc[0] + self.COVERAGE_FRACTION * (
-                        target["location"][0] - ball_loc[0]
+                        target.location[0] - ball_loc[0]
                     )
                     ty = ball_loc[1] + self.COVERAGE_FRACTION * (
-                        target["location"][1] - ball_loc[1]
+                        target.location[1] - ball_loc[1]
                     )
-                    directions[p["number"]] = norm(tx - px, ty - py)
+                    directions[p.number] = norm(tx - p.location[0], ty - p.location[1])
                 else:
-                    fp = self.formation.get(p["number"], (px, py))
-                    directions[p["number"]] = norm(fp[0] - px, fp[1] - py)
+                    fp = self.formation.get(p.number, p.location)
+                    directions[p.number] = p.direction_to(fp)
 
         return directions
 
@@ -175,7 +162,7 @@ class BaselineAI(BaseAI):
             for opp in opponents
             if min(
                 self.formation,
-                key=lambda num: dist(opp["location"], self.formation[num]),
+                key=lambda num: dist(opp.location, self.formation[num]),
             )
             == player_number
         ]
@@ -236,18 +223,17 @@ class BaselineAI(BaseAI):
         candidates = [
             t
             for t in teammates
-            if t["number"] != carrier["number"]
-            and (min_x is None or t["location"][0] > min_x)
+            if t.number != carrier.number and (min_x is None or t.location[0] > min_x)
         ]
         if not candidates:
             return None
 
         # Evaluate most-forward candidates first for an early exit
-        candidates.sort(key=lambda p: p["location"][0], reverse=True)
+        candidates.sort(key=lambda p: p.location[0], reverse=True)
 
         for target in candidates:
             polygon = self._build_passing_lane_polygon(
-                carrier["location"], target["location"], self.PASSING_LANE_ANGLE
+                carrier.location, target.location, self.PASSING_LANE_ANGLE
             )
             if not players_in_polygon(opponents, polygon):
                 return target

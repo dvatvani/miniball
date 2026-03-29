@@ -37,6 +37,7 @@ from rich.console import Console
 
 from miniball.ai import (
     BaseAI,
+    BallState,
     GameState,
     MatchState,
     PlayerAction,
@@ -453,46 +454,45 @@ class MatchSimulation:
             return global_to_team(x, y, is_home=is_home)
 
         team: list[PlayerState] = [
-            {
-                "number": p.number,
-                "is_teammate": True,
-                "has_ball": self.ball.possessed_by is p,
-                "cooldown_timer": p.cooldown_timer,
-                "location": pos(p.x, p.y),
-            }
+            PlayerState(
+                number=p.number,
+                is_teammate=True,
+                has_ball=self.ball.possessed_by is p,
+                cooldown_timer=p.cooldown_timer,
+                location=pos(p.x, p.y),
+            )
             for p in self.all_players
             if p.is_home == perspective_team_is_home
         ]
         opposition: list[PlayerState] = [
-            {
-                "number": p.number,
-                "is_teammate": False,
-                "has_ball": self.ball.possessed_by is p,
-                "cooldown_timer": p.cooldown_timer,
-                "location": pos(p.x, p.y),
-            }
+            PlayerState(
+                number=p.number,
+                is_teammate=False,
+                has_ball=self.ball.possessed_by is p,
+                cooldown_timer=p.cooldown_timer,
+                location=pos(p.x, p.y),
+            )
             for p in self.all_players
             if p.is_home != perspective_team_is_home
         ]
 
         team_score = self.score_a if perspective_team_is_home else self.score_b
         oppo_score = self.score_b if perspective_team_is_home else self.score_a
-        match_state: MatchState = {
-            "team_current_score": team_score,
-            "opposition_current_score": oppo_score,
-            "match_time_seconds": GAME_DURATION - self._time_remaining,
-        }
 
         return GameState(
             team=team,
             opposition=opposition,
-            ball={
-                "location": pos(self.ball.x, self.ball.y),
-                "velocity": global_delta_to_team(
+            ball=BallState(
+                location=pos(self.ball.x, self.ball.y),
+                velocity=global_delta_to_team(
                     self.ball.vx, self.ball.vy, is_home=is_home
                 ),
-            },
-            match_state=match_state,
+            ),
+            match_state=MatchState(
+                team_current_score=team_score,
+                opposition_current_score=oppo_score,
+                match_time_seconds=GAME_DURATION - self._time_remaining,
+            ),
         )
 
     def _apply_actions(
@@ -639,19 +639,19 @@ class MatchSimulation:
 
         rows: list[dict[str, object]] = []
         for frame_number, record in enumerate(self._history):
-            gbx, gby = record.state.ball["location"]
-            gbvx, gbvy = record.state.ball["velocity"]
-            score_a = record.state.match_state["team_current_score"]
-            score_b = record.state.match_state["opposition_current_score"]
-            match_time = record.state.match_state["match_time_seconds"]
+            gbx, gby = record.state.ball.location
+            gbvx, gbvy = record.state.ball.velocity
+            score_a = record.state.match_state.team_current_score
+            score_b = record.state.match_state.opposition_current_score
+            match_time = record.state.match_state.match_time_seconds
             t = record.game_time
 
             _null_action: PlayerAction = {"direction": (0.0, 0.0), "strike": False}
             hp = record.human_player
 
             for player in record.state.team:  # team A – own frame = global
-                num = player["number"]
-                gx, gy = player["location"]
+                num = player.number
+                gx, gy = player.location
                 pa_a = record.actions_team_a["actions"].get(num, _null_action)
                 dx, dy = pa_a["direction"]
                 rows.append(
@@ -669,8 +669,8 @@ class MatchSimulation:
                         "pos_y": gy,
                         "pos_x_global": gx,
                         "pos_y_global": gy,
-                        "has_ball": player["has_ball"],
-                        "cooldown_timer": player["cooldown_timer"],
+                        "has_ball": player.has_ball,
+                        "cooldown_timer": player.cooldown_timer,
                         "action_dx": dx,
                         "action_dy": dy,
                         "action_dx_global": dx,
@@ -690,8 +690,8 @@ class MatchSimulation:
                 )
 
             for player in record.state.opposition:  # team B
-                num = player["number"]
-                gx, gy = player["location"]
+                num = player.number
+                gx, gy = player.location
                 bx, by = global_to_team(gx, gy, is_home=False)
                 pa_b = record.actions_team_b["actions"].get(num, _null_action)
                 dx_b, dy_b = pa_b["direction"]
@@ -713,8 +713,8 @@ class MatchSimulation:
                         "pos_y": by,
                         "pos_x_global": gx,
                         "pos_y_global": gy,
-                        "has_ball": player["has_ball"],
-                        "cooldown_timer": player["cooldown_timer"],
+                        "has_ball": player.has_ball,
+                        "cooldown_timer": player.cooldown_timer,
                         "action_dx": dx_b,
                         "action_dy": dy_b,
                         "action_dx_global": adx_g,

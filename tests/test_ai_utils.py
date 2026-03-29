@@ -29,17 +29,17 @@ def make_player(
     is_teammate: bool = True,
     has_ball: bool = False,
 ) -> PlayerState:
-    return {
-        "number": number,
-        "is_teammate": is_teammate,
-        "has_ball": has_ball,
-        "cooldown_timer": 0.0,
-        "location": (x, y),
-    }
+    return PlayerState(
+        number=number,
+        is_teammate=is_teammate,
+        has_ball=has_ball,
+        cooldown_timer=0.0,
+        location=(x, y),
+    )
 
 
 def make_ball(x: float, y: float, vx: float = 0.0, vy: float = 0.0) -> BallState:
-    return {"location": (x, y), "velocity": (vx, vy)}
+    return BallState(location=(x, y), velocity=(vx, vy))
 
 
 # ── dist ──────────────────────────────────────────────────────────────────────
@@ -138,13 +138,13 @@ def test_player_closest_to_point_returns_nearest():
         make_player(3, 90.0, 70.0),
     ]
     result = player_closest_to_point(players, [52.0, 42.0])
-    assert result["number"] == 2
+    assert result.number == 2
 
 
 def test_player_closest_to_point_single_player():
     players = [make_player(1, 60.0, 40.0)]
     result = player_closest_to_point(players, [0.0, 0.0])
-    assert result["number"] == 1
+    assert result.number == 1
 
 
 def test_player_closest_to_point_tie_broken_by_list_order():
@@ -154,7 +154,7 @@ def test_player_closest_to_point_tie_broken_by_list_order():
         make_player(2, 0.0, -5.0),
     ]
     result = player_closest_to_point(players, [0.0, 0.0])
-    assert result["number"] in (1, 2)
+    assert result.number in (1, 2)
 
 
 # ── player_closest_to_ball ────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ def test_player_closest_to_ball_uses_ball_location():
         make_player(2, 61.0, 40.0),
     ]
     result = player_closest_to_ball(players, ball)
-    assert result["number"] == 2
+    assert result.number == 2
 
 
 # ── player_closest_to_player ─────────────────────────────────────────────────
@@ -181,7 +181,7 @@ def test_player_closest_to_player_ignores_self_by_default():
         make_player(3, 90.0, 70.0),
     ]
     result = player_closest_to_player(players[0], players)
-    assert result["number"] == 2
+    assert result.number == 2
 
 
 def test_player_closest_to_player_include_self():
@@ -191,7 +191,7 @@ def test_player_closest_to_player_include_self():
         make_player(2, 90.0, 70.0),
     ]
     result = player_closest_to_player(players[0], players, ignore_self=False)
-    assert result["number"] == 1
+    assert result.number == 1
 
 
 def test_player_closest_to_player_includes_opponents_when_in_list():
@@ -200,7 +200,7 @@ def test_player_closest_to_player_includes_opponents_when_in_list():
     opponent_nearby = make_player(2, 61.0, 40.0, is_teammate=False)
     teammate_far = make_player(3, 90.0, 70.0, is_teammate=True)
     result = player_closest_to_player(ref, [ref, opponent_nearby, teammate_far])
-    assert result["number"] == 2  # nearest player regardless of team
+    assert result.number == 2  # nearest player regardless of team
 
 
 def test_player_closest_to_player_teammates_only_when_filtered():
@@ -208,10 +208,10 @@ def test_player_closest_to_player_teammates_only_when_filtered():
     ref = make_player(1, 60.0, 40.0, is_teammate=True)
     opponent_nearby = make_player(2, 61.0, 40.0, is_teammate=False)
     teammate_far = make_player(3, 90.0, 70.0, is_teammate=True)
-    teammates = [p for p in [ref, opponent_nearby, teammate_far] if p["is_teammate"]]
+    teammates = [p for p in [ref, opponent_nearby, teammate_far] if p.is_teammate]
     result = player_closest_to_player(ref, teammates)
     assert (
-        result["number"] == 3
+        result.number == 3
     )  # opponent excluded by caller; teammate_far is only option
 
 

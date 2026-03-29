@@ -4,6 +4,11 @@ These functions operate on standard-pitch-space coordinates (X ∈ [0, 120],
 Y ∈ [0, 80], team always attacks right) and have no side effects.  They are
 free-standing so that AI authors can import and test them independently of
 any ``BaseAI`` subclass.
+
+Most player- and ball-centric operations are also available as methods on
+``PlayerState`` and ``BallState`` directly (e.g. ``player.dist_to(target)``,
+``ball.projected_position(t)``).  The free-standing forms here are kept for
+use in list comprehensions and as arguments to ``min``/``max``/``sorted``.
 """
 
 from __future__ import annotations
@@ -12,7 +17,7 @@ import math
 from collections.abc import Sequence
 
 from miniball.ai.interface import BallState, PlayerState
-from miniball.config import BALL_DRAG, STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
+from miniball.config import STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
 
 
 def dist(a: Sequence[float], b: Sequence[float]) -> float:
@@ -47,13 +52,13 @@ def goal_center() -> tuple[float, float]:
 def player_closest_to_point(
     players: list[PlayerState], point: Sequence[float]
 ) -> PlayerState:
-    """Return the player in ``players`` closest to the point."""
-    return min(players, key=lambda p: dist(p["location"], point))
+    """Return the player in ``players`` closest to ``point``."""
+    return min(players, key=lambda p: p.dist_to(point))
 
 
 def player_closest_to_ball(players: list[PlayerState], ball: BallState) -> PlayerState:
     """Return the player in ``players`` closest to the ball."""
-    return player_closest_to_point(players, ball["location"])
+    return ball.closest_player_in(players)
 
 
 def player_closest_to_player(
@@ -61,74 +66,27 @@ def player_closest_to_player(
 ) -> PlayerState:
     """Return the player in ``players`` closest to ``player``.
 
-    If ``ignore_self`` is ``True`` (the default), the entry in ``players``
-    matching ``player`` by both team and number is excluded.  No other
-    filtering is applied, so passing a mixed list of teammates and opponents
-    will find the nearest regardless of team.
+    If ``ignore_self`` is ``True`` (the default), the entry matching ``player``
+    by both team and number is excluded.  No other filtering is applied.
     """
-    candidates = (
-        [
-            p
-            for p in players
-            if not (
-                p["number"] == player["number"]
-                and p["is_teammate"] == player["is_teammate"]
-            )
-        ]
-        if ignore_self
-        else list(players)
-    )
-    return player_closest_to_point(candidates, player["location"])
+    return player.closest_in(players, ignore_self=ignore_self)
 
 
 def projected_ball_position(ball: BallState, t: float) -> tuple[float, float]:
     """Project the ball's position after ``t`` seconds.
 
-    Uses a continuous-drag approximation of the discrete linear drag model
-    applied each frame by the game engine:
-
-        v(t) ≈ v₀ · exp(−BALL_DRAG · t)
-        x(t) = x₀ + v₀ / BALL_DRAG · (1 − exp(−BALL_DRAG · t))
-
-    This ignores pitch boundaries (wall bounces) and possession changes, so
-    the prediction degrades for long time horizons or when the ball is near a
-    wall.  For short look-aheads (< 1 s) on an open pitch the approximation
-    is accurate to within a fraction of a pitch unit.
-
-    Parameters
-    ----------
-    ball:
-        Current ball state with ``location`` and ``velocity`` in standard
-        pitch coordinates.
-    t:
-        Look-ahead time in seconds.  Negative values return the current
-        position unchanged.
-
-    Returns
-    -------
-    tuple[float, float]
-        Predicted ``(x, y)`` position in standard pitch coordinates.
+    Delegates to ``ball.projected_position(t)`` — see ``BallState`` for full
+    documentation of the drag model used.
     """
-    if t <= 0.0 or BALL_DRAG <= 0.0:
-        return ball["location"][0], ball["location"][1]
-
-    decay = math.exp(-BALL_DRAG * t)
-    factor = (1.0 - decay) / BALL_DRAG
-
-    x = ball["location"][0] + ball["velocity"][0] * factor
-    y = ball["location"][1] + ball["velocity"][1] * factor
-    return x, y
+    return ball.projected_position(t)
 
 
 def projected_ball_position_when_crossing_x(
     ball: BallState, x: float
 ) -> tuple[float, float] | None:
-    """Project the ball's position when it crosses the x value.
+    """Project the ball's position when it first crosses ``x``.
 
-    Returns None if the ball is not moving.
+    Returns ``None`` if the ball is stationary in x or already at ``x``.
+    Delegates to ``ball.position_when_crossing_x(x)``.
     """
-    if abs(ball["velocity"][0]) < 1e-6 or abs(x - ball["location"][0]) < 1e-6:
-        return None
-    t = (x - ball["location"][0]) / ball["velocity"][0]
-    x_projected, y_projected = projected_ball_position(ball, t)
-    return (x_projected, y_projected)
+    return ball.position_when_crossing_x(x)

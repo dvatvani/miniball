@@ -1,9 +1,9 @@
-"""AI interface contract for Miniball — TypedDicts and the abstract base class.
+"""AI interface contract for Miniball — state classes and the abstract base class.
 
 This module defines the boundary between the game engine and any AI
-implementation.  It intentionally contains *no* gameplay logic: only the
-data structures (state / action schemas) and the abstract ``BaseAI`` class
-that every AI must subclass.
+implementation.  It intentionally contains *no* rendering or input logic:
+only the data structures (state / action schemas) and the abstract
+``BaseAI`` class that every AI must subclass.
 
 Anatomy of an AI engine
 ────────────────────────
@@ -31,8 +31,33 @@ are in **standard pitch space**:
 The game engine applies a 180 ° rotation for the team that attacks left in
 screen space, so AI implementations never need to think about it.
 
-State schema
-────────────
+State API
+─────────
+    # ── Player ──────────────────────────────────────────────────────────────
+    player.number           → int
+    player.is_teammate      → bool
+    player.has_ball         → bool
+    player.cooldown_timer   → float   # 0 = can receive ball
+    player.location         → tuple[float, float]
+
+    player.dist_to(target)           # distance to another player or (x, y)
+    player.direction_to(target)      # unnormalised vector toward target
+    player.closest_in(players)       # nearest player from a list
+
+    # ── Ball ────────────────────────────────────────────────────────────────
+    ball.location   → tuple[float, float]
+    ball.velocity   → tuple[float, float]
+
+    ball.projected_position(t)           # where will the ball be in t seconds?
+    ball.position_when_crossing_x(x)     # where will it be when it crosses x?
+    ball.closest_player_in(players)      # nearest player to the ball
+
+    # ── Match ───────────────────────────────────────────────────────────────
+    match.team_current_score        → int
+    match.opposition_current_score  → int
+    match.match_time_seconds        → float
+
+    # ── Game (top-level state passed to get_actions) ─────────────────────────
     state.team          → list[PlayerState]   (this AI's players)
     state.opposition    → list[PlayerState]
     state.ball          → BallState
@@ -43,10 +68,10 @@ State schema
     state.team_has_ball → bool
 
     state.players(
-        teammates=True,        # include this AI's players
-        opposition=True,       # include opposition players
-        player_on_ball=True,   # include the player currently in possession
-        players_on_cooldown=True,  # include players with a non-zero cooldown timer
+        teammates=True,           # include this AI's players
+        opposition=True,          # include opposition players
+        player_on_ball=True,      # include the player currently in possession
+        players_on_cooldown=True, # include players with a non-zero cooldown timer
     ) → list[PlayerState]
 
 Action schema
@@ -68,29 +93,157 @@ Action schema
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import TypedDict
 
-# ── State TypedDicts ──────────────────────────────────────────────────────────
+from miniball.config import BALL_DRAG
+
+# ── State classes ─────────────────────────────────────────────────────────────
 
 
-class PlayerState(TypedDict):
-    number: int
-    is_teammate: bool
-    has_ball: bool
-    cooldown_timer: float  # seconds remaining on cooldown; 0 = can receive ball
-    location: tuple[float, float]  # standard pitch coords (x, y)
+class PlayerState:
+    """Snapshot of a single player's state in standard pitch coordinates."""
+
+    def __init__(
+        self,
+        *,
+        number: int,
+        is_teammate: bool,
+        has_ball: bool,
+        cooldown_timer: float,
+        location: tuple[float, float],
+    ) -> None:
+        self.number = number
+        self.is_teammate = is_teammate
+        self.has_ball = has_ball
+        self.cooldown_timer = cooldown_timer
+        self.location = location
+
+    # ── Geometry helpers ──────────────────────────────────────────────────
+
+    def dist_to(self, target: PlayerState | Sequence[float]) -> float:
+        """Euclidean distance from this player to ``target``.
+
+        ``target`` may be another ``PlayerState`` or any ``(x, y)``
+        sequence (e.g. the return value of ``goal_center()``).
+        """
+        point = target.location if isinstance(target, PlayerState) else target
+        return math.hypot(point[0] - self.location[0], point[1] - self.location[1])
+
+    def direction_to(
+        self, target: PlayerState | Sequence[float]
+    ) -> tuple[float, float]:
+        """Unnormalised displacement vector from this player toward ``target``.
+
+        The magnitude equals the distance; pass it directly as a
+        ``PlayerAction`` direction and the engine will clip it to speed 1
+        when the player is more than 1 unit away.
+        """
+        point = target.location if isinstance(target, PlayerState) else target
+        return (point[0] - self.location[0], point[1] - self.location[1])
+
+    def closest_in(
+        self,
+        players: list[PlayerState],
+        ignore_self: bool = True,
+    ) -> PlayerState:
+        """Return the player in ``players`` closest to this player.
+
+        If ``ignore_self`` is ``True`` (default), the entry matching this
+        player by both team and number is excluded.  No other filtering is
+        applied — pass a mixed list to find the nearest regardless of team.
+        """
+        candidates = (
+            [
+                p
+                for p in players
+                if not (p.number == self.number and p.is_teammate == self.is_teammate)
+            ]
+            if ignore_self
+            else list(players)
+        )
+        return min(candidates, key=lambda p: self.dist_to(p))
+
+    def __repr__(self) -> str:
+        team = "team" if self.is_teammate else "opp"
+        return f"PlayerState({team}#{self.number} @ {self.location})"
 
 
-class BallState(TypedDict):
-    location: tuple[float, float]  # standard pitch coords (x, y)
-    velocity: tuple[float, float]  # standard pitch units / s (vx, vy)
+class BallState:
+    """Snapshot of the ball's state in standard pitch coordinates."""
+
+    def __init__(
+        self,
+        *,
+        location: tuple[float, float],
+        velocity: tuple[float, float],
+    ) -> None:
+        self.location = location
+        self.velocity = velocity
+
+    # ── Physics helpers ───────────────────────────────────────────────────
+
+    def projected_position(self, t: float) -> tuple[float, float]:
+        """Project the ball's position after ``t`` seconds.
+
+        Uses a continuous-drag approximation of the game engine's per-frame
+        linear drag model:
+
+            v(t) ≈ v₀ · exp(−BALL_DRAG · t)
+            x(t) = x₀ + v₀/BALL_DRAG · (1 − exp(−BALL_DRAG · t))
+
+        Ignores pitch boundaries and possession changes — accurate for
+        short look-aheads (< 1 s) on an open pitch.  Negative ``t``
+        returns the current position unchanged.
+        """
+        if t <= 0.0 or BALL_DRAG <= 0.0:
+            return self.location
+        decay = math.exp(-BALL_DRAG * t)
+        factor = (1.0 - decay) / BALL_DRAG
+        return (
+            self.location[0] + self.velocity[0] * factor,
+            self.location[1] + self.velocity[1] * factor,
+        )
+
+    def position_when_crossing_x(self, x: float) -> tuple[float, float] | None:
+        """Project the ball's position when it first crosses ``x``.
+
+        Returns ``None`` if the ball is stationary in x or already at ``x``.
+        """
+        if abs(self.velocity[0]) < 1e-6 or abs(x - self.location[0]) < 1e-6:
+            return None
+        t = (x - self.location[0]) / self.velocity[0]
+        return self.projected_position(t)
+
+    def closest_player_in(self, players: list[PlayerState]) -> PlayerState:
+        """Return the player in ``players`` closest to the ball."""
+        return min(players, key=lambda p: p.dist_to(self.location))
+
+    def __repr__(self) -> str:
+        return f"BallState(@ {self.location}, v={self.velocity})"
 
 
-class MatchState(TypedDict):
-    team_current_score: int
-    opposition_current_score: int
-    match_time_seconds: float  # elapsed since kick-off
+class MatchState:
+    """Current match score and elapsed time."""
+
+    def __init__(
+        self,
+        *,
+        team_current_score: int,
+        opposition_current_score: int,
+        match_time_seconds: float,
+    ) -> None:
+        self.team_current_score = team_current_score
+        self.opposition_current_score = opposition_current_score
+        self.match_time_seconds = match_time_seconds
+
+    def __repr__(self) -> str:
+        return (
+            f"MatchState({self.team_current_score}:{self.opposition_current_score}"
+            f" @ {self.match_time_seconds:.1f}s)"
+        )
 
 
 class GameState:
@@ -132,12 +285,12 @@ class GameState:
     @property
     def ball_carrier(self) -> PlayerState | None:
         """The player currently in possession of the ball, or ``None``."""
-        return next((p for p in self.all_players if p["has_ball"]), None)
+        return next((p for p in self.all_players if p.has_ball), None)
 
     @property
     def team_has_ball(self) -> bool:
         """``True`` if any teammate currently holds the ball."""
-        return any(p["has_ball"] for p in self.team)
+        return any(p.has_ball for p in self.team)
 
     def players(
         self,
@@ -167,10 +320,13 @@ class GameState:
         if opposition:
             pool.extend(self.opposition)
         if not player_on_ball:
-            pool = [p for p in pool if not p["has_ball"]]
+            pool = [p for p in pool if not p.has_ball]
         if not players_on_cooldown:
-            pool = [p for p in pool if p["cooldown_timer"] == 0.0]
+            pool = [p for p in pool if p.cooldown_timer == 0.0]
         return pool
+
+
+# ── Action TypedDicts (returned by AI, consumed by the game engine) ───────────
 
 
 class PlayerAction(TypedDict):
