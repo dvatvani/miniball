@@ -9,11 +9,7 @@ from miniball.ai.utils import (
     dist,
     goal_center,
     norm,
-    player_closest_to_ball,
-    player_closest_to_player,
     player_closest_to_point,
-    projected_ball_position,
-    projected_ball_position_when_crossing_x,
     relative_position,
 )
 from miniball.config import BALL_DRAG, STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
@@ -157,135 +153,128 @@ def test_player_closest_to_point_tie_broken_by_list_order():
     assert result.number in (1, 2)
 
 
-# ── player_closest_to_ball ────────────────────────────────────────────────────
+# ── ball.closest_player_in ────────────────────────────────────────────────────
 
 
-def test_player_closest_to_ball_uses_ball_location():
+def test_closest_player_in_uses_ball_location():
     ball = make_ball(60.0, 40.0)
     players = [
         make_player(1, 20.0, 20.0),
         make_player(2, 61.0, 40.0),
     ]
-    result = player_closest_to_ball(players, ball)
-    assert result.number == 2
+    assert ball.closest_player_in(players).number == 2
 
 
-# ── player_closest_to_player ─────────────────────────────────────────────────
+# ── player.closest_in ────────────────────────────────────────────────────────
 
 
-def test_player_closest_to_player_ignores_self_by_default():
+def test_closest_in_ignores_self_by_default():
     """With ignore_self=True (default), the player's own entry is excluded."""
     players = [
         make_player(1, 60.0, 40.0),  # the reference player
-        make_player(2, 61.0, 40.0),  # closest other teammate
+        make_player(2, 61.0, 40.0),  # closest other
         make_player(3, 90.0, 70.0),
     ]
-    result = player_closest_to_player(players[0], players)
-    assert result.number == 2
+    assert players[0].closest_in(players).number == 2
 
 
-def test_player_closest_to_player_include_self():
+def test_closest_in_include_self():
     """With ignore_self=False, the player can be returned as their own nearest."""
     players = [
         make_player(1, 60.0, 40.0),
         make_player(2, 90.0, 70.0),
     ]
-    result = player_closest_to_player(players[0], players, ignore_self=False)
-    assert result.number == 1
+    assert players[0].closest_in(players, ignore_self=False).number == 1
 
 
-def test_player_closest_to_player_includes_opponents_when_in_list():
+def test_closest_in_includes_opponents_when_in_list():
     """Opponents in the list are not filtered out — caller controls the pool."""
     ref = make_player(1, 60.0, 40.0, is_teammate=True)
     opponent_nearby = make_player(2, 61.0, 40.0, is_teammate=False)
     teammate_far = make_player(3, 90.0, 70.0, is_teammate=True)
-    result = player_closest_to_player(ref, [ref, opponent_nearby, teammate_far])
-    assert result.number == 2  # nearest player regardless of team
+    assert ref.closest_in([ref, opponent_nearby, teammate_far]).number == 2
 
 
-def test_player_closest_to_player_teammates_only_when_filtered():
-    """Passing only teammates preserves the old team-scoped behaviour."""
+def test_closest_in_teammates_only_when_filtered():
+    """Passing only teammates achieves team-scoped behaviour."""
     ref = make_player(1, 60.0, 40.0, is_teammate=True)
     opponent_nearby = make_player(2, 61.0, 40.0, is_teammate=False)
     teammate_far = make_player(3, 90.0, 70.0, is_teammate=True)
     teammates = [p for p in [ref, opponent_nearby, teammate_far] if p.is_teammate]
-    result = player_closest_to_player(ref, teammates)
-    assert (
-        result.number == 3
-    )  # opponent excluded by caller; teammate_far is only option
+    assert ref.closest_in(teammates).number == 3
 
 
-# ── projected_ball_position ───────────────────────────────────────────────────
+# ── ball.projected_position ───────────────────────────────────────────────────
 
 
-def test_projected_ball_position_zero_time_returns_current():
+def test_projected_position_zero_time_returns_current():
     ball = make_ball(60.0, 40.0, vx=20.0, vy=10.0)
-    x, y = projected_ball_position(ball, 0.0)
+    x, y = ball.projected_position(0.0)
     assert x == pytest.approx(60.0)
     assert y == pytest.approx(40.0)
 
 
-def test_projected_ball_position_negative_time_returns_current():
+def test_projected_position_negative_time_returns_current():
     ball = make_ball(60.0, 40.0, vx=20.0, vy=10.0)
-    x, y = projected_ball_position(ball, -1.0)
+    x, y = ball.projected_position(-1.0)
     assert x == pytest.approx(60.0)
     assert y == pytest.approx(40.0)
 
 
-def test_projected_ball_position_no_velocity_stays_put():
+def test_projected_position_no_velocity_stays_put():
     ball = make_ball(30.0, 50.0, vx=0.0, vy=0.0)
-    x, y = projected_ball_position(ball, 2.0)
+    x, y = ball.projected_position(2.0)
     assert x == pytest.approx(30.0)
     assert y == pytest.approx(50.0)
 
 
-def test_projected_ball_position_matches_drag_formula():
+def test_projected_position_matches_drag_formula():
     """Verify against the continuous-drag formula directly."""
     ball = make_ball(60.0, 40.0, vx=10.0, vy=0.0)
     t = 1.0
     decay = math.exp(-BALL_DRAG * t)
     factor = (1.0 - decay) / BALL_DRAG
     expected_x = 60.0 + 10.0 * factor
-    x, y = projected_ball_position(ball, t)
+    x, y = ball.projected_position(t)
     assert x == pytest.approx(expected_x, rel=1e-6)
     assert y == pytest.approx(40.0)
 
 
-def test_projected_ball_position_ball_decelerates():
+def test_projected_position_ball_decelerates():
     """Projected position with drag must be closer to start than without drag."""
     ball = make_ball(0.0, 0.0, vx=10.0, vy=0.0)
     t = 2.0
-    x_drag, _ = projected_ball_position(ball, t)
+    x_drag, _ = ball.projected_position(t)
     x_no_drag = 0.0 + 10.0 * t  # constant velocity (no drag)
     assert x_drag < x_no_drag
 
 
-def test_projected_ball_position_2d():
+def test_projected_position_2d():
     ball = make_ball(50.0, 30.0, vx=6.0, vy=8.0)
     t = 0.5
     decay = math.exp(-BALL_DRAG * t)
     factor = (1.0 - decay) / BALL_DRAG
-    x, y = projected_ball_position(ball, t)
+    x, y = ball.projected_position(t)
     assert x == pytest.approx(50.0 + 6.0 * factor, rel=1e-6)
     assert y == pytest.approx(30.0 + 8.0 * factor, rel=1e-6)
 
 
-# ── projected_ball_position_when_crossing_x ───────────────────────────────────
+# ── ball.position_when_crossing_x ─────────────────────────────────────────────
 
 
 def test_crossing_x_stationary_ball_returns_none():
     ball = make_ball(60.0, 40.0, vx=0.0, vy=0.0)
-    assert projected_ball_position_when_crossing_x(ball, 80.0) is None
+    assert ball.position_when_crossing_x(80.0) is None
 
 
 def test_crossing_x_ball_already_at_target_returns_none():
     ball = make_ball(60.0, 40.0, vx=10.0, vy=0.0)
-    assert projected_ball_position_when_crossing_x(ball, 60.0) is None
+    assert ball.position_when_crossing_x(60.0) is None
 
 
 def test_crossing_x_returns_tuple():
     ball = make_ball(60.0, 40.0, vx=10.0, vy=0.0)
-    result = projected_ball_position_when_crossing_x(ball, 80.0)
+    result = ball.position_when_crossing_x(80.0)
     assert result is not None
     assert isinstance(result, tuple)
     assert len(result) == 2
@@ -294,9 +283,8 @@ def test_crossing_x_returns_tuple():
 def test_crossing_x_forward_moving_ball():
     """Ball moving right should end up near the target x."""
     ball = make_ball(60.0, 40.0, vx=20.0, vy=0.0)
-    result = projected_ball_position_when_crossing_x(ball, 80.0)
+    result = ball.position_when_crossing_x(80.0)
     assert result is not None
-    # Due to drag the actual projected x won't be exactly 80, but should be close
     x, y = result
     assert 60.0 < x
     assert y == pytest.approx(40.0)
@@ -305,7 +293,7 @@ def test_crossing_x_forward_moving_ball():
 def test_crossing_x_with_lateral_velocity():
     """A ball with both vx and vy should deflect in y at the crossing point."""
     ball = make_ball(60.0, 40.0, vx=10.0, vy=5.0)
-    result = projected_ball_position_when_crossing_x(ball, 80.0)
+    result = ball.position_when_crossing_x(80.0)
     assert result is not None
     _, y = result
     assert y > 40.0  # ball drifts upward

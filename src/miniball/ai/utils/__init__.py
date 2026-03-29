@@ -16,7 +16,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
-from miniball.ai.interface import BallState, PlayerState
+from miniball.ai.interface import PlayerState
 from miniball.config import STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
 
 
@@ -54,39 +54,3 @@ def player_closest_to_point(
 ) -> PlayerState:
     """Return the player in ``players`` closest to ``point``."""
     return min(players, key=lambda p: p.dist_to(point))
-
-
-def player_closest_to_ball(players: list[PlayerState], ball: BallState) -> PlayerState:
-    """Return the player in ``players`` closest to the ball."""
-    return ball.closest_player_in(players)
-
-
-def player_closest_to_player(
-    player: PlayerState, players: list[PlayerState], ignore_self: bool = True
-) -> PlayerState:
-    """Return the player in ``players`` closest to ``player``.
-
-    If ``ignore_self`` is ``True`` (the default), the entry matching ``player``
-    by both team and number is excluded.  No other filtering is applied.
-    """
-    return player.closest_in(players, ignore_self=ignore_self)
-
-
-def projected_ball_position(ball: BallState, t: float) -> tuple[float, float]:
-    """Project the ball's position after ``t`` seconds.
-
-    Delegates to ``ball.projected_position(t)`` — see ``BallState`` for full
-    documentation of the drag model used.
-    """
-    return ball.projected_position(t)
-
-
-def projected_ball_position_when_crossing_x(
-    ball: BallState, x: float
-) -> tuple[float, float] | None:
-    """Project the ball's position when it first crosses ``x``.
-
-    Returns ``None`` if the ball is stationary in x or already at ``x``.
-    Delegates to ``ball.position_when_crossing_x(x)``.
-    """
-    return ball.position_when_crossing_x(x)
