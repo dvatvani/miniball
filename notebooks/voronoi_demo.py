@@ -26,6 +26,7 @@ def _(teams_list):
         PlayerState(
             number=p.number,
             is_teammate=True,
+            is_home=True,
             has_ball=False,
             location=(p.x, p.y),
             cooldown_timer=0.0,

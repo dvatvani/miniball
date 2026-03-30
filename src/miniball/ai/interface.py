@@ -36,9 +36,11 @@ State API
     # ── Player ──────────────────────────────────────────────────────────────
     player.number           → int
     player.is_teammate      → bool
+    player.is_home          → bool   # True for the home team, regardless of AI perspective
     player.has_ball         → bool
     player.cooldown_timer   → float   # 0 = can receive ball
-    player.location         → tuple[float, float]
+    player.location         → tuple[float, float]   # team-relative coords (attacks right)
+    player.global_location  → tuple[float, float]   # shared global frame (home attacks right)
 
     player.dist_to(target)           # distance to another player or (x, y)
     player.direction_to(target)      # unnormalised vector toward target
@@ -62,10 +64,13 @@ State API
     state.opposition    → list[PlayerState]
     state.ball          → BallState
     state.match_state   → MatchState
+    state.is_home       → bool                (True if this AI controls the home team)
 
-    state.all_players   → list[PlayerState]   (team + opposition)
-    state.ball_carrier  → PlayerState | None
-    state.team_has_ball → bool
+    state.all_players        → list[PlayerState]   (team + opposition)
+    state.ball_carrier       → PlayerState | None
+    state.team_has_ball      → bool
+    state.global_ball_location   → tuple[float, float]   (ball in shared global frame)
+    state.global_ball_velocity   → tuple[float, float]
 
     state.players(
         teammates=True,           # include this AI's players
@@ -96,7 +101,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import TypedDict
 
-from miniball.config import BALL_DRAG
+from miniball.config import BALL_DRAG, STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
 
 # ── State classes ─────────────────────────────────────────────────────────────
 
@@ -109,15 +114,38 @@ class PlayerState:
         *,
         number: int,
         is_teammate: bool,
+        is_home: bool,
         has_ball: bool,
         cooldown_timer: float,
         location: tuple[float, float],
     ) -> None:
         self.number = number
         self.is_teammate = is_teammate
+        self.is_home = is_home
         self.has_ball = has_ball
         self.cooldown_timer = cooldown_timer
         self.location = location
+
+    @property
+    def global_location(self) -> tuple[float, float]:
+        """Player's position in the shared global frame (home team attacks right).
+
+        ``location`` is stored in the *perspective* frame of the ``GameState``
+        that created this player — i.e. the frame where this AI's team always
+        attacks right.  For a home-team ``GameState`` that is already the global
+        frame; for an away-team ``GameState`` coordinates are rotated 180°.
+
+        The perspective can be recovered without storing it explicitly:
+        ``state_is_home == (is_teammate == is_home)``, which holds for all four
+        combinations of perspective × team membership.
+        """
+        state_is_home = self.is_teammate == self.is_home
+        if state_is_home:
+            return self.location
+        return (
+            STANDARD_PITCH_WIDTH - self.location[0],
+            STANDARD_PITCH_HEIGHT - self.location[1],
+        )
 
     # ── Geometry helpers ──────────────────────────────────────────────────
 
@@ -158,7 +186,7 @@ class PlayerState:
             [
                 p
                 for p in players
-                if not (p.number == self.number and p.is_teammate == self.is_teammate)
+                if not (p.number == self.number and p.is_home == self.is_home)
             ]
             if ignore_self
             else list(players)
@@ -166,8 +194,9 @@ class PlayerState:
         return min(candidates, key=lambda p: self.dist_to(p))
 
     def __repr__(self) -> str:
-        team = "team" if self.is_teammate else "opp"
-        return f"PlayerState({team}#{self.number} @ {self.location})"
+        side = "home" if self.is_home else "away"
+        role = "team" if self.is_teammate else "opp"
+        return f"PlayerState({side}/{role}#{self.number} @ {self.location})"
 
 
 class BallState:
@@ -270,11 +299,13 @@ class GameState:
         opposition: list[PlayerState],
         ball: BallState,
         match_state: MatchState,
+        is_home: bool = True,
     ) -> None:
         self.team = team
         self.opposition = opposition
         self.ball = ball
         self.match_state = match_state
+        self.is_home = is_home
 
     @property
     def all_players(self) -> list[PlayerState]:
@@ -290,6 +321,27 @@ class GameState:
     def team_has_ball(self) -> bool:
         """``True`` if any teammate currently holds the ball."""
         return any(p.has_ball for p in self.team)
+
+    @property
+    def global_ball_location(self) -> tuple[float, float]:
+        """Ball position in the shared global frame (home team attacks right).
+
+        Equivalent to ``ball.location`` for the home team's ``GameState``; for
+        the away team's ``GameState`` the coordinates are rotated 180° back to
+        the global reference frame.
+        """
+        if self.is_home:
+            return self.ball.location
+        bx, by = self.ball.location
+        return (STANDARD_PITCH_WIDTH - bx, STANDARD_PITCH_HEIGHT - by)
+
+    @property
+    def global_ball_velocity(self) -> tuple[float, float]:
+        """Ball velocity in the shared global frame (home team attacks right)."""
+        if self.is_home:
+            return self.ball.velocity
+        vx, vy = self.ball.velocity
+        return (-vx, -vy)
 
     def players(
         self,

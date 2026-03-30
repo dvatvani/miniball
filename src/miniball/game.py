@@ -63,7 +63,7 @@ from miniball.config import (
     TACKLE_COOLDOWN,
     TITLE,
 )
-from miniball.coordinate_transformations import global_to_screen
+from miniball.coordinate_transformations import global_to_screen, team_to_global
 from miniball.match_simulation import HumanInput, MatchSimulation, Player
 from miniball.teams import Team
 
@@ -419,11 +419,16 @@ class FootballGame(arcade.Window):
             _PL + _PW, _PL + _PW + _goal_d, _g_lo, _g_hi, C_LINE, 1
         )
 
-        # Average-position dots
+        # Average-position dots: convert team coords → global → mini-pitch pixels.
+        # team_to_screen maps to the main game pitch; the mini pitch has its own
+        # origin (_PL, _PB) and scale (_S), so we apply that formula directly.
         if self._avg_positions_df is not None:
             for row in self._avg_positions_df.iter_rows(named=True):
-                dot_x = _PL + row["avg_x"] * _S
-                dot_y = _PB + row["avg_y"] * _S
+                gx, gy = team_to_global(
+                    row["avg_x"], row["avg_y"], is_home=row["is_home"]
+                )
+                dot_x = _PL + gx * _S
+                dot_y = _PB + gy * _S
                 dot_color: tuple[int, int, int] = (
                     C_TEAM_A if row["is_home"] else C_TEAM_B
                 )

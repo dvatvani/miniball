@@ -46,19 +46,22 @@ from miniball.config import (
 
 
 def avg_positions(df: pl.DataFrame) -> pl.DataFrame:
-    """Return each player's average position over the match in global coordinates.
+    """Return each player's average position over the match in team coordinates.
+
+    Coordinates are in the **team's own normalised frame** (the team always
+    attacks right, x ∈ [0, 120], y ∈ [0, 80]).  This makes the output
+    consistent across multiple matches regardless of which physical side each
+    team occupied.
 
     Columns
     -------
     team, is_home, player_number, avg_x, avg_y
-        Positions are in the global pitch frame (home team attacks right,
-        x ∈ [0, 120], y ∈ [0, 80]).
     """
     return (
         df.group_by(["team", "is_home", "player_number"])
         .agg(
-            pl.col("pos_x_global").mean().alias("avg_x"),
-            pl.col("pos_y_global").mean().alias("avg_y"),
+            pl.col("pos_x").mean().alias("avg_x"),
+            pl.col("pos_y").mean().alias("avg_y"),
         )
         .sort(["team", "player_number"])
     )

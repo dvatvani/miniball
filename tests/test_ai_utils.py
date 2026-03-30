@@ -23,11 +23,13 @@ def make_player(
     y: float,
     *,
     is_teammate: bool = True,
+    is_home: bool = True,
     has_ball: bool = False,
 ) -> PlayerState:
     return PlayerState(
         number=number,
         is_teammate=is_teammate,
+        is_home=is_home,
         has_ball=has_ball,
         cooldown_timer=0.0,
         location=(x, y),
@@ -189,17 +191,17 @@ def test_closest_in_include_self():
 
 def test_closest_in_includes_opponents_when_in_list():
     """Opponents in the list are not filtered out — caller controls the pool."""
-    ref = make_player(1, 60.0, 40.0, is_teammate=True)
-    opponent_nearby = make_player(2, 61.0, 40.0, is_teammate=False)
-    teammate_far = make_player(3, 90.0, 70.0, is_teammate=True)
+    ref = make_player(1, 60.0, 40.0, is_teammate=True, is_home=True)
+    opponent_nearby = make_player(2, 61.0, 40.0, is_teammate=False, is_home=False)
+    teammate_far = make_player(3, 90.0, 70.0, is_teammate=True, is_home=True)
     assert ref.closest_in([ref, opponent_nearby, teammate_far]).number == 2
 
 
 def test_closest_in_teammates_only_when_filtered():
     """Passing only teammates achieves team-scoped behaviour."""
-    ref = make_player(1, 60.0, 40.0, is_teammate=True)
-    opponent_nearby = make_player(2, 61.0, 40.0, is_teammate=False)
-    teammate_far = make_player(3, 90.0, 70.0, is_teammate=True)
+    ref = make_player(1, 60.0, 40.0, is_teammate=True, is_home=True)
+    opponent_nearby = make_player(2, 61.0, 40.0, is_teammate=False, is_home=False)
+    teammate_far = make_player(3, 90.0, 70.0, is_teammate=True, is_home=True)
     teammates = [p for p in [ref, opponent_nearby, teammate_far] if p.is_teammate]
     assert ref.closest_in(teammates).number == 3
 

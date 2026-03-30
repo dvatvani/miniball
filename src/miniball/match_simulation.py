@@ -457,6 +457,7 @@ class MatchSimulation:
             PlayerState(
                 number=p.number,
                 is_teammate=True,
+                is_home=perspective_team_is_home,
                 has_ball=self.ball.possessed_by is p,
                 cooldown_timer=p.cooldown_timer,
                 location=pos(p.x, p.y),
@@ -468,6 +469,7 @@ class MatchSimulation:
             PlayerState(
                 number=p.number,
                 is_teammate=False,
+                is_home=not perspective_team_is_home,
                 has_ball=self.ball.possessed_by is p,
                 cooldown_timer=p.cooldown_timer,
                 location=pos(p.x, p.y),
@@ -493,6 +495,7 @@ class MatchSimulation:
                 opposition_current_score=oppo_score,
                 match_time_seconds=GAME_DURATION - self._time_remaining,
             ),
+            is_home=perspective_team_is_home,
         )
 
     def _apply_actions(
@@ -630,16 +633,20 @@ class MatchSimulation:
 
         Coordinate conventions
         ──────────────────────
-        ``pos_x`` / ``pos_y`` / ``action_dx`` / ``action_dy`` are in the
-        team's own normalised frame (the team always attacks right, x ∈ [0,
-        120], y ∈ [0, 80]).  The ``_global`` variants are in the shared pitch
-        frame where team A always attacks right; for team A these are identical,
-        while for team B they are the 180° rotation (W − x, H − y).
+        All positional and directional columns (``pos_x``, ``pos_y``,
+        ``action_dx``, ``action_dy``, ``ball_x``, ``ball_y``, ``ball_vx``,
+        ``ball_vy``) are in the **team's own normalised frame**: the team
+        always attacks right, X ∈ [0, 120], Y ∈ [0, 80].  This convention
+        is consistent across home and away teams and across multiple matches,
+        making it suitable for cross-game analysis.
+
+        To obtain global coordinates (home team attacks right), use:
+        ``global_x = pos_x if is_home else (120 − pos_x)``
+        or reconstruct the per-frame ``GameState`` objects via
+        ``reconstruct_frames()`` and access ``player.global_location``.
         """
         if not self._history:
             return None
-
-        from miniball.coordinate_transformations import team_delta_to_global
 
         name_a = self.team_a_config.name
         name_b = self.team_b_config.name
@@ -674,23 +681,15 @@ class MatchSimulation:
                         and hp[1] == num,
                         "pos_x": gx,
                         "pos_y": gy,
-                        "pos_x_global": gx,
-                        "pos_y_global": gy,
                         "has_ball": player.has_ball,
                         "cooldown_timer": player.cooldown_timer,
                         "action_dx": dx,
                         "action_dy": dy,
-                        "action_dx_global": dx,
-                        "action_dy_global": dy,
                         "strike": pa_a["strike"],
                         "ball_x": gbx,
                         "ball_y": gby,
-                        "ball_x_global": gbx,
-                        "ball_y_global": gby,
                         "ball_vx": gbvx,
                         "ball_vy": gbvy,
-                        "ball_vx_global": gbvx,
-                        "ball_vy_global": gbvy,
                         "team_score": score_a,
                         "opposition_score": score_b,
                     }
@@ -702,7 +701,6 @@ class MatchSimulation:
                 bx, by = global_to_team(gx, gy, is_home=False)
                 pa_b = record.actions_team_b.get(num, _null_action)
                 dx_b, dy_b = pa_b["direction"]
-                adx_g, ady_g = team_delta_to_global(dx_b, dy_b, is_home=False)
                 bbx, bby = global_to_team(gbx, gby, is_home=False)
                 bbvx, bbvy = global_delta_to_team(gbvx, gbvy, is_home=False)
                 rows.append(
@@ -718,23 +716,15 @@ class MatchSimulation:
                         and hp[1] == num,
                         "pos_x": bx,
                         "pos_y": by,
-                        "pos_x_global": gx,
-                        "pos_y_global": gy,
                         "has_ball": player.has_ball,
                         "cooldown_timer": player.cooldown_timer,
                         "action_dx": dx_b,
                         "action_dy": dy_b,
-                        "action_dx_global": adx_g,
-                        "action_dy_global": ady_g,
                         "strike": pa_b["strike"],
                         "ball_x": bbx,
                         "ball_y": bby,
-                        "ball_x_global": gbx,
-                        "ball_y_global": gby,
                         "ball_vx": bbvx,
                         "ball_vy": bbvy,
-                        "ball_vx_global": gbvx,
-                        "ball_vy_global": gbvy,
                         "team_score": score_b,
                         "opposition_score": score_a,
                     }
@@ -743,17 +733,218 @@ class MatchSimulation:
         return pl.DataFrame(rows)
 
     def _write_parquet(self, df: pl.DataFrame, verbose: bool = True) -> None:
-        """Write a match history DataFrame to a timestamped parquet file."""
+        """Write a match history DataFrame to a timestamped parquet file.
+
+        Narrow dtypes are applied here (not in ``build_match_df``) so that
+        in-memory stats operations work with full-precision data while only
+        the persisted file uses compact types.
+        """
         out_dir = Path("match_data")
         out_dir.mkdir(exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         unique_id = str(uuid.uuid4())[:8]
         path = out_dir / f"match_{timestamp}_{unique_id}.parquet"
-        df.write_parquet(path)
+        df.with_columns(
+            # Spatial / physics – float16 (0.125-unit precision is ample)
+            pl.col("pos_x").cast(pl.Float16),
+            pl.col("pos_y").cast(pl.Float16),
+            pl.col("action_dx").cast(pl.Float16),
+            pl.col("action_dy").cast(pl.Float16),
+            pl.col("ball_x").cast(pl.Float16),
+            pl.col("ball_y").cast(pl.Float16),
+            pl.col("ball_vx").cast(pl.Float16),
+            pl.col("ball_vy").cast(pl.Float16),
+            pl.col("cooldown_timer").cast(pl.Float16),
+            # Time – float32 (float16 is too coarse at 120 s)
+            pl.col("game_time").cast(pl.Float32),
+            pl.col("match_time_seconds").cast(pl.Float32),
+            # Integers – downcast to smallest fitting type
+            pl.col("frame_number").cast(pl.Int16),
+            pl.col("player_number").cast(pl.Int8),
+            pl.col("team_score").cast(pl.Int8),
+            pl.col("opposition_score").cast(pl.Int8),
+        ).write_parquet(path)
         if verbose:
             print(
                 f"Match data saved → {path}  ({len(self._history)} frames · {len(df)} rows)"
             )
+
+
+# ── Frame reconstruction ──────────────────────────────────────────────────────
+
+
+@dataclass
+class FrameSnapshot:
+    """A fully reconstructed single frame from a match parquet file.
+
+    Both team perspectives are provided so that AI logic, rich player/ball
+    methods, and coordinate helpers all work directly without re-parsing
+    tabular data.
+
+    Attributes
+    ----------
+    frame_number:
+        Zero-based index matching the ``frame_number`` column in the parquet.
+    game_time:
+        Elapsed wall-clock game time in seconds (may exceed
+        ``match_time_seconds`` due to countdown/goal-flash pauses).
+    state_a, state_b:
+        ``GameState`` from team A's (home) and team B's (away) perspective
+        respectively.  Both use the standard team frame (attacking right).
+    actions_a, actions_b:
+        The effective ``TeamActions`` submitted by each team's AI for this
+        frame, in each team's own normalised coordinate frame.
+    """
+
+    frame_number: int
+    game_time: float
+    state_a: GameState
+    state_b: GameState
+    actions_a: TeamActions
+    actions_b: TeamActions
+
+
+def reconstruct_frames(path: str | Path) -> list[FrameSnapshot]:
+    """Read a match parquet file and reconstruct per-frame native objects.
+
+    The returned ``FrameSnapshot`` list mirrors what the simulation engine
+    produces internally each frame, making it straightforward to replay a
+    saved match, inspect AI decisions, or run analytical tools that operate
+    on ``GameState`` / ``PlayerState`` / ``BallState`` objects.
+
+    Parameters
+    ----------
+    path:
+        Path to a parquet file produced by ``MatchSimulation.build_match_df``.
+
+    Returns
+    -------
+    list[FrameSnapshot]
+        One entry per frame, sorted by ``frame_number``.
+    """
+    from miniball.config import STANDARD_PITCH_HEIGHT as _H
+    from miniball.config import STANDARD_PITCH_WIDTH as _W
+
+    df = pl.read_parquet(path)
+    snapshots: list[FrameSnapshot] = []
+
+    for frame_df in df.sort("frame_number").partition_by(
+        "frame_number", maintain_order=True
+    ):
+        home_rows = frame_df.filter(pl.col("is_home"))
+        away_rows = frame_df.filter(~pl.col("is_home"))
+
+        first_home = home_rows.row(0, named=True)
+        first_away = away_rows.row(0, named=True)
+        frame_number: int = first_home["frame_number"]
+        game_time: float = first_home["game_time"]
+        match_time: float = first_home["match_time_seconds"]
+
+        # ── Build team A's GameState (home perspective = global frame) ────────
+        team_a_players = [
+            PlayerState(
+                number=row["player_number"],
+                is_teammate=True,
+                is_home=True,
+                has_ball=row["has_ball"],
+                cooldown_timer=row["cooldown_timer"],
+                location=(row["pos_x"], row["pos_y"]),
+            )
+            for row in home_rows.iter_rows(named=True)
+        ]
+        # Away players in team A's frame: rotate team-B coords back to global.
+        opp_for_a = [
+            PlayerState(
+                number=row["player_number"],
+                is_teammate=False,
+                is_home=False,
+                has_ball=row["has_ball"],
+                cooldown_timer=row["cooldown_timer"],
+                location=(_W - row["pos_x"], _H - row["pos_y"]),
+            )
+            for row in away_rows.iter_rows(named=True)
+        ]
+        state_a = GameState(
+            team=team_a_players,
+            opposition=opp_for_a,
+            ball=BallState(
+                location=(first_home["ball_x"], first_home["ball_y"]),
+                velocity=(first_home["ball_vx"], first_home["ball_vy"]),
+            ),
+            match_state=MatchState(
+                team_current_score=first_home["team_score"],
+                opposition_current_score=first_home["opposition_score"],
+                match_time_seconds=match_time,
+            ),
+            is_home=True,
+        )
+
+        # ── Build team B's GameState (away perspective) ───────────────────────
+        team_b_players = [
+            PlayerState(
+                number=row["player_number"],
+                is_teammate=True,
+                is_home=False,
+                has_ball=row["has_ball"],
+                cooldown_timer=row["cooldown_timer"],
+                location=(row["pos_x"], row["pos_y"]),
+            )
+            for row in away_rows.iter_rows(named=True)
+        ]
+        # Home players in team B's frame: rotate global coords to team-B frame.
+        opp_for_b = [
+            PlayerState(
+                number=row["player_number"],
+                is_teammate=False,
+                is_home=True,
+                has_ball=row["has_ball"],
+                cooldown_timer=row["cooldown_timer"],
+                location=(_W - row["pos_x"], _H - row["pos_y"]),
+            )
+            for row in home_rows.iter_rows(named=True)
+        ]
+        state_b = GameState(
+            team=team_b_players,
+            opposition=opp_for_b,
+            ball=BallState(
+                location=(first_away["ball_x"], first_away["ball_y"]),
+                velocity=(first_away["ball_vx"], first_away["ball_vy"]),
+            ),
+            match_state=MatchState(
+                team_current_score=first_away["team_score"],
+                opposition_current_score=first_away["opposition_score"],
+                match_time_seconds=match_time,
+            ),
+            is_home=False,
+        )
+
+        actions_a: TeamActions = {
+            row["player_number"]: {
+                "direction": (row["action_dx"], row["action_dy"]),
+                "strike": row["strike"],
+            }
+            for row in home_rows.iter_rows(named=True)
+        }
+        actions_b: TeamActions = {
+            row["player_number"]: {
+                "direction": (row["action_dx"], row["action_dy"]),
+                "strike": row["strike"],
+            }
+            for row in away_rows.iter_rows(named=True)
+        }
+
+        snapshots.append(
+            FrameSnapshot(
+                frame_number=frame_number,
+                game_time=game_time,
+                state_a=state_a,
+                state_b=state_b,
+                actions_a=actions_a,
+                actions_b=actions_b,
+            )
+        )
+
+    return snapshots
 
 
 # ── Parallel fixture runner ───────────────────────────────────────────────────
