@@ -44,15 +44,20 @@ State API
 
     player.dist_to(target)           # distance to another player or (x, y)
     player.direction_to(target)      # unnormalised vector toward target
-    player.closest_in(players)       # nearest player from a list
+    player.closest_player(players)   # nearest player from a list (by distance)
+    player.intercept_time(ball)      # seconds until player can reach the ball
+    player.intercept_point(ball)     # position where player will meet the ball
 
     # ── Ball ────────────────────────────────────────────────────────────────
     ball.location   → tuple[float, float]
     ball.velocity   → tuple[float, float]
 
-    ball.projected_position(t)           # where will the ball be in t seconds?
-    ball.position_when_crossing_x(x)     # where will it be when it crosses x?
-    ball.closest_player_in(players)      # nearest player to the ball
+    ball.projected_position(t)                    # where will the ball be in t seconds?
+    ball.position_when_crossing_x(x)             # where will it be when it crosses x?
+    ball.closest_player(players)                  # nearest player to the ball (by distance)
+    ball.interception_times(players)              # [(time, player), …] sorted fastest-first
+    ball.fastest_interceptor(players)             # player who reaches ball soonest
+    ball.intercept_advantage(player, opponents)   # seconds player beats nearest opponent
 
     # ── Match ───────────────────────────────────────────────────────────────
     match.team_current_score        → int
@@ -101,7 +106,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import TypedDict
 
-from miniball.config import BALL_DRAG, STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
+from miniball.config import (
+    BALL_DRAG,
+    PLAYER_SPEED,
+    STANDARD_PITCH_HEIGHT,
+    STANDARD_PITCH_WIDTH,
+)
+
+_PLAYER_SPEED_SQ: float = PLAYER_SPEED * PLAYER_SPEED
 
 # ── State classes ─────────────────────────────────────────────────────────────
 
@@ -171,7 +183,65 @@ class PlayerState:
         point = target.location if isinstance(target, PlayerState) else target
         return (point[0] - self.location[0], point[1] - self.location[1])
 
-    def closest_in(
+    def intercept_time(self, ball: BallState) -> float:
+        """Minimum time (seconds) until this player can reach the ball.
+
+        Uses a constant-velocity approximation (drag is ignored) to reduce
+        the problem to a quadratic:
+
+            A·t² + B·t + C = 0
+            A = |V|² − PLAYER_SPEED²
+            B = 2 · (d · V)          (d = ball_pos − player_pos)
+            C = |d|²
+
+        The smallest non-negative root is returned.  When the ball is moving
+        faster than the player and no finite constant-velocity intercept exists
+        (negative discriminant, or no positive root), the method falls back to
+        the time required to reach the ball's *current* position — an optimistic
+        lower bound that keeps player rankings sensible.
+        """
+        dx = ball.location[0] - self.location[0]
+        dy = ball.location[1] - self.location[1]
+        dist_sq = dx * dx + dy * dy
+
+        if dist_sq < 1e-12:
+            return 0.0
+
+        vx, vy = ball.velocity
+        A = vx * vx + vy * vy - _PLAYER_SPEED_SQ
+        B = 2.0 * (dx * vx + dy * vy)
+        C = dist_sq  # always > 0 here
+
+        if abs(A) < 1e-9:
+            # Ball speed ≈ player speed → linear equation
+            t = -C / B if abs(B) > 1e-9 else None
+        else:
+            disc = B * B - 4.0 * A * C
+            if disc < 0.0:
+                t = None  # ball faster than player, no constant-vel solution
+            else:
+                sqrt_disc = math.sqrt(disc)
+                t1 = (-B - sqrt_disc) / (2.0 * A)
+                t2 = (-B + sqrt_disc) / (2.0 * A)
+                positives = [ti for ti in (t1, t2) if ti >= 0.0]
+                t = min(positives) if positives else None
+
+        # Fallback: time to reach ball's current position (optimistic estimate)
+        return t if t is not None else math.sqrt(dist_sq) / PLAYER_SPEED
+
+    def intercept_point(self, ball: BallState) -> tuple[float, float]:
+        """Position where this player will meet the ball at the earliest opportunity.
+
+        Projects the ball forward at constant velocity for ``intercept_time``
+        seconds.  Pass the result to ``direction_to`` to move toward it::
+
+            action = player.direction_to(player.intercept_point(ball))
+        """
+        t = self.intercept_time(ball)
+        vx, vy = ball.velocity
+        return (ball.location[0] + vx * t, ball.location[1] + vy * t)
+
+    def closest_player(
         self,
         players: list[PlayerState],
         ignore_self: bool = True,
@@ -245,9 +315,46 @@ class BallState:
         t = (x - self.location[0]) / self.velocity[0]
         return self.projected_position(t)
 
-    def closest_player_in(self, players: list[PlayerState]) -> PlayerState:
+    def closest_player(self, players: list[PlayerState]) -> PlayerState:
         """Return the player in ``players`` closest to the ball."""
         return min(players, key=lambda p: p.dist_to(self.location))
+
+    # ── Interception helpers ───────────────────────────────────────────────
+
+    def interception_times(
+        self, players: list[PlayerState]
+    ) -> list[tuple[float, PlayerState]]:
+        """Return ``players`` sorted by how quickly each can intercept the ball.
+
+        Each entry is ``(intercept_time_seconds, player)``.  The list is sorted
+        ascending so ``result[0]`` gives the fastest interceptor.
+
+        Useful for computing arrival order, intercept advantage, or any logic
+        that needs to rank players by their ability to reach the ball.
+        """
+        return sorted(
+            ((p.intercept_time(self), p) for p in players),
+            key=lambda tp: tp[0],
+        )
+
+    def fastest_interceptor(self, players: list[PlayerState]) -> PlayerState:
+        """Return the player who can intercept the ball in the least time."""
+        return self.interception_times(players)[0][1]
+
+    def intercept_advantage(
+        self, player: PlayerState, opponents: list[PlayerState]
+    ) -> float:
+        """Seconds by which ``player`` beats the nearest opponent to the ball.
+
+        A positive value means ``player`` arrives first; negative means at
+        least one opponent is faster.  Returns ``math.inf`` when ``opponents``
+        is empty (no competition).
+        """
+        if not opponents:
+            return math.inf
+        player_time = player.intercept_time(self)
+        nearest_opponent_time = self.interception_times(opponents)[0][0]
+        return nearest_opponent_time - player_time
 
     def __repr__(self) -> str:
         return f"BallState(@ {self.location}, v={self.velocity})"
@@ -323,6 +430,16 @@ class GameState:
         return any(p.has_ball for p in self.team)
 
     @property
+    def opposition_has_ball(self) -> bool:
+        """``True`` if any opposition currently holds the ball."""
+        return any(p.has_ball for p in self.opposition)
+
+    @property
+    def loose_ball(self) -> bool:
+        """``True`` if the ball is not currently being held by any player."""
+        return not self.team_has_ball and not self.opposition_has_ball
+
+    @property
     def global_ball_location(self) -> tuple[float, float]:
         """Ball position in the shared global frame (home team attacks right).
 
@@ -350,6 +467,9 @@ class GameState:
         opposition: bool = True,
         player_on_ball: bool = True,
         players_on_cooldown: bool = True,
+        include_goalkeepers: bool = True,
+        include_outfield: bool = True,
+        n_goalkeepers: int = 1,
     ) -> list[PlayerState]:
         """Return a filtered list of players.
 
@@ -364,7 +484,29 @@ class GameState:
         players_on_cooldown:
             Include players whose ``cooldown_timer`` is non-zero (i.e. they
             recently struck the ball and cannot yet receive a pass).
+        include_goalkeepers:
+            Include goalkeepers (default: True). Goalkeepers aren't mechanically
+            distinct to outfield players. This is a convenience parameter to make it
+            easier to model the protection of goal for AI. The player(s) closest to goal
+            are treated as the team's goalkeepers.
+        include_outfield:
+            Include outfield players (default: True). Outfield players are all players
+            that are not goalkeepers.
+        n_goalkeepers:
+            Number of goalkeepers to include in each team (default: 1).
         """
+        _own_goal = (0.0, STANDARD_PITCH_HEIGHT / 2)
+        _opp_goal = (STANDARD_PITCH_WIDTH, STANDARD_PITCH_HEIGHT / 2)
+        team_goalkeepers: list[PlayerState] = sorted(
+            self.team, key=lambda p: p.dist_to(_own_goal)
+        )[:n_goalkeepers]
+        opposition_goalkeepers: list[PlayerState] = sorted(
+            self.opposition, key=lambda p: p.dist_to(_opp_goal)
+        )[:n_goalkeepers]
+        goalkeepers: list[PlayerState] = team_goalkeepers + opposition_goalkeepers
+        outfield: list[PlayerState] = [
+            p for p in self.all_players if p not in goalkeepers
+        ]
         pool: list[PlayerState] = []
         if teammates:
             pool.extend(self.team)
@@ -374,6 +516,10 @@ class GameState:
             pool = [p for p in pool if not p.has_ball]
         if not players_on_cooldown:
             pool = [p for p in pool if p.cooldown_timer == 0.0]
+        if not include_goalkeepers:
+            pool = [p for p in pool if p not in goalkeepers]
+        if not include_outfield:
+            pool = [p for p in pool if p not in outfield]
         return pool
 
 

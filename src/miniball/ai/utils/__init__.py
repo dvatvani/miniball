@@ -40,7 +40,16 @@ def relative_position(a: Sequence[float], b: Sequence[float]) -> tuple[float, fl
     return (b[0] - a[0], b[1] - a[1])
 
 
-def goal_center() -> tuple[float, float]:
+def team_goal_center() -> tuple[float, float]:
+    """Return the centre of the own goal in standard pitch coordinates.
+
+    In the normalised view the own goal is always on the left side
+    (low X), so this returns ``(0.0, STANDARD_PITCH_HEIGHT / 2)``.
+    """
+    return 0.0, STANDARD_PITCH_HEIGHT / 2
+
+
+def opposition_goal_center() -> tuple[float, float]:
     """Return the centre of the attacking goal in standard pitch coordinates.
 
     In the normalised view the attacking goal is always on the right side

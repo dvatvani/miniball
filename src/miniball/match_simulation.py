@@ -36,8 +36,8 @@ import polars as pl
 from rich.console import Console
 
 from miniball.ai import (
-    BaseAI,
     BallState,
+    BaseAI,
     GameState,
     MatchState,
     PlayerAction,
@@ -745,17 +745,17 @@ class MatchSimulation:
         unique_id = str(uuid.uuid4())[:8]
         path = out_dir / f"match_{timestamp}_{unique_id}.parquet"
         df.with_columns(
-            # Spatial / physics – float16 (0.125-unit precision is ample)
-            pl.col("pos_x").cast(pl.Float16),
-            pl.col("pos_y").cast(pl.Float16),
-            pl.col("action_dx").cast(pl.Float16),
-            pl.col("action_dy").cast(pl.Float16),
-            pl.col("ball_x").cast(pl.Float16),
-            pl.col("ball_y").cast(pl.Float16),
-            pl.col("ball_vx").cast(pl.Float16),
-            pl.col("ball_vy").cast(pl.Float16),
-            pl.col("cooldown_timer").cast(pl.Float16),
-            # Time – float32 (float16 is too coarse at 120 s)
+            # Spatial / physics – float32
+            pl.col("pos_x").cast(pl.Float32),
+            pl.col("pos_y").cast(pl.Float32),
+            pl.col("action_dx").cast(pl.Float32),
+            pl.col("action_dy").cast(pl.Float32),
+            pl.col("ball_x").cast(pl.Float32),
+            pl.col("ball_y").cast(pl.Float32),
+            pl.col("ball_vx").cast(pl.Float32),
+            pl.col("ball_vy").cast(pl.Float32),
+            pl.col("cooldown_timer").cast(pl.Float32),
+            # Time – float32
             pl.col("game_time").cast(pl.Float32),
             pl.col("match_time_seconds").cast(pl.Float32),
             # Integers – downcast to smallest fitting type

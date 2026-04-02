@@ -3,7 +3,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from miniball.ai.interface import BaseAI, GameState, PlayerState, TeamActions
-from miniball.ai.utils import dist, goal_center, player_closest_to_point
+from miniball.ai.utils import dist, opposition_goal_center, player_closest_to_point
 from miniball.ai.utils.geometry import players_bounded_voronoi, players_in_polygon
 
 
@@ -49,20 +49,15 @@ class BaselineAI(BaseAI):
         strike = False
 
         if state.team_has_ball:
-            assert state.ball_carrier is not None
-            directions, strike = self._in_possession_actions(state.ball_carrier, state)
+            directions, strike = self._in_possession_actions(state)
         else:
-            directions = self._out_of_possession_actions(
-                state.team, state.opposition, state.ball.location
-            )
+            directions = self._out_of_possession_actions(state)
+            strike = False
 
-        carrier_num = (
-            state.ball_carrier.number if state.ball_carrier is not None else None
-        )
         return {
             pid: {
                 "direction": direction,
-                "strike": strike and pid == carrier_num,
+                "strike": strike and pid == state.ball_carrier.number,
             }
             for pid, direction in directions.items()
         }
@@ -71,44 +66,55 @@ class BaselineAI(BaseAI):
 
     def _in_possession_actions(
         self,
-        ball_carrier: PlayerState,
         state: GameState,
     ) -> tuple[dict[int, tuple[float, float]], bool]:
-        vor = players_bounded_voronoi(state.all_players)
-        centroids = vor.region_centroids
-
+        assert state.ball_carrier is not None
         directions: dict[int, tuple[float, float]] = {}
-        for i, p in enumerate(state.team):
-            cx, cy = centroids[i]
-            directions[p.number] = (cx - p.location[0], cy - p.location[1])
-
         strike = False
 
-        if ball_carrier.dist_to(goal_center()) <= self.STRIKE_RANGE:
-            directions[ball_carrier.number] = ball_carrier.direction_to(goal_center())
+        # Move players to the centroid of player's current Voronoi region to find space
+        vor = players_bounded_voronoi(state.team)
+        for p, centroid in zip(state.team, vor.region_centroids):
+            directions[p.number] = p.direction_to(centroid)
+
+        # Move the GK towards the starting GK position
+        gk = state.players(teammates=True, include_goalkeepers=True)[0]
+        directions[gk.number] = gk.direction_to(self.formation[gk.number])
+
+        # Strike if close enough to the goal
+        if state.ball_carrier.dist_to(opposition_goal_center()) <= self.STRIKE_RANGE:
+            directions[state.ball_carrier.number] = state.ball_carrier.direction_to(
+                opposition_goal_center()
+            )
             strike = True
+
+        # Otherwise, look for a clear passing lane, and clear the ball if under pressure
         else:
             forward_target = self._passing_lane_pass_target(
-                ball_carrier,
+                state.ball_carrier,
                 state.team,
                 state.opposition,
-                min_x=ball_carrier.location[0],
+                min_x=state.ball_carrier.location[0],
             )
-            under_pressure = any(
-                ball_carrier.dist_to(opp) <= self.PRESSURE_RANGE
-                for opp in state.opposition
+            under_pressure = (
+                state.ball_carrier.dist_to(
+                    state.ball_carrier.closest_player(state.opposition).location
+                )
+                <= self.PRESSURE_RANGE
             )
             if forward_target is not None:
-                directions[ball_carrier.number] = ball_carrier.direction_to(
+                directions[state.ball_carrier.number] = state.ball_carrier.direction_to(
                     forward_target
                 )
                 strike = True
             elif under_pressure:
                 nearest_opp = player_closest_to_point(
-                    state.opposition, ball_carrier.location
+                    state.opposition, state.ball_carrier.location
                 )
-                nearest_opp_dy = nearest_opp.location[1] - ball_carrier.location[1]
-                directions[ball_carrier.number] = (
+                nearest_opp_dy = (
+                    nearest_opp.location[1] - state.ball_carrier.location[1]
+                )
+                directions[state.ball_carrier.number] = (
                     10,
                     -10 if nearest_opp_dy > 0 else 10,
                 )
@@ -120,25 +126,33 @@ class BaselineAI(BaseAI):
 
     def _out_of_possession_actions(
         self,
-        teammates: list[PlayerState],
-        opponents: list[PlayerState],
-        ball_loc: tuple[float, float],
+        state: GameState,
     ) -> dict[int, tuple[float, float]]:
-        closest = min(teammates, key=lambda p: p.dist_to(ball_loc))
-
         directions: dict[int, tuple[float, float]] = {}
-        for p in teammates:
-            if p.number == closest.number:
-                directions[p.number] = p.direction_to(ball_loc)
+
+        closest = state.ball.fastest_interceptor(state.team)
+        for p in state.team:
+            # Move the closest player toward the ball
+            if p == closest:
+                directions[p.number] = p.direction_to(p.intercept_point(state.ball))
+                # If the closest player to the ball is the GK, but the GK isn't
+                # going to get to the ball first, then move the GK back to the line.
+                if (
+                    closest.number == 1
+                    and state.ball.fastest_interceptor(state.all_players) != closest
+                ):
+                    directions[p.number] = p.direction_to(self.formation[p.number])
+
+            # move other players toward their zonal marking target
             else:
-                owned = self._zonal_opponents(p.number, opponents)
+                owned = self._zonal_opponents(p.number, state.opposition)
                 if owned and p.number != 1:  # Prevent GK from marking anyone
                     target = min(owned, key=lambda o: o.location[0])
-                    tx = ball_loc[0] + self.COVERAGE_FRACTION * (
-                        target.location[0] - ball_loc[0]
+                    tx = state.ball.location[0] + self.COVERAGE_FRACTION * (
+                        target.location[0] - state.ball.location[0]
                     )
-                    ty = ball_loc[1] + self.COVERAGE_FRACTION * (
-                        target.location[1] - ball_loc[1]
+                    ty = state.ball.location[1] + self.COVERAGE_FRACTION * (
+                        target.location[1] - state.ball.location[1]
                     )
                     directions[p.number] = (tx - p.location[0], ty - p.location[1])
                 else:
