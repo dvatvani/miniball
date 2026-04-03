@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from miniball.ai.interface import BallState, PlayerState
+from miniball.ai.interface import BallPathPoint, BallState, PlayerState
 from miniball.ai.utils import (
     dist,
     norm,
@@ -14,6 +14,7 @@ from miniball.ai.utils import (
 )
 from miniball.config import (
     BALL_DRAG,
+    BALL_RADIUS,
     PLAYER_SPEED,
     STANDARD_PITCH_HEIGHT,
     STANDARD_PITCH_WIDTH,
@@ -345,13 +346,20 @@ def test_intercept_time_ball_moving_away_is_longer():
 
 
 def test_intercept_point_is_on_constant_velocity_trajectory():
-    """The intercept point should equal the ball's constant-velocity projection."""
-    player = make_player(1, 0.0, 40.0)
-    ball = make_ball(60.0, 40.0, vx=10.0, vy=5.0)
+    """Intercept point equals the constant-velocity ball projection at intercept_time.
+
+    Uses a player close enough to intercept while the ball is still moving
+    (not after it has stopped), so the constant-velocity path formula applies.
+    Ball speed √(5²+3²) ≈ 5.8 ≪ PLAYER_SPEED; player 10 units away → t_seg ≈ 1.5 s,
+    well within the ~7 s segment duration.
+    """
+    player = make_player(1, 50.0, 40.0)
+    ball = make_ball(60.0, 40.0, vx=5.0, vy=3.0)
     t = player.intercept_time(ball)
     px, py = player.intercept_point(ball)
-    expected_x = 60.0 + 10.0 * t
-    expected_y = 40.0 + 5.0 * t
+    # On the first (non-bouncing) segment seg.time = 0, so t_seg = t
+    expected_x = 60.0 + 5.0 * t
+    expected_y = 40.0 + 3.0 * t
     assert px == pytest.approx(expected_x, rel=1e-4)
     assert py == pytest.approx(expected_y, rel=1e-4)
 
@@ -460,3 +468,210 @@ def test_intercept_advantage_uses_nearest_opponent_only():
     adv = ball.intercept_advantage(player, [opp_close, opp_distant])
     # The closest opponent (opp_close) is faster, so advantage should be negative
     assert adv < 0
+
+
+# ── BallState.trace_path ──────────────────────────────────────────────────────
+
+_RIGHT_WALL = STANDARD_PITCH_WIDTH - BALL_RADIUS  # 119.0
+_LEFT_WALL = BALL_RADIUS  # 1.0
+_TOP_WALL = STANDARD_PITCH_HEIGHT - BALL_RADIUS  # 79.0
+_BOTTOM_WALL = BALL_RADIUS  # 1.0
+
+
+def test_trace_path_stationary_ball_returns_single_point():
+    """A ball with no velocity is already stopped — path has one entry."""
+    ball = make_ball(60.0, 40.0)
+    path = ball.trace_path()
+    assert len(path) == 1
+    assert isinstance(path[0], BallPathPoint)
+    assert path[0].location == pytest.approx((60.0, 40.0))
+    assert path[0].time == pytest.approx(0.0)
+
+
+def test_trace_path_ball_stops_inside_pitch():
+    """Ball with moderate velocity stops without hitting any wall."""
+    # rest_x = 60 + 10/BALL_DRAG ≈ 77.2 — well inside [1, 119]
+    ball = make_ball(60.0, 40.0, vx=10.0)
+    path = ball.trace_path()
+    assert len(path) == 2
+    start, stop = path
+    assert start.location == pytest.approx((60.0, 40.0))
+    assert start.velocity == pytest.approx((10.0, 0.0))
+    assert start.time == pytest.approx(0.0)
+    assert stop.velocity == pytest.approx((0.0, 0.0), abs=1e-9)
+    assert stop.time > 0.0
+    # Stop x should be close to the mathematical rest position (ball still has
+    # speed _BALL_STOP_SPEED ≈ 0.1 at the stop point, so it's ~0.17 units short)
+    assert stop.location[0] == pytest.approx(60.0 + 10.0 / BALL_DRAG, abs=0.5)
+    assert stop.location[1] == pytest.approx(40.0, abs=1e-3)
+
+
+def test_trace_path_bounces_off_right_wall():
+    """Ball heading right fast enough to hit the right boundary bounces back."""
+    # rest_x = 100 + 30/BALL_DRAG ≈ 151 — exceeds 119, so right-wall hit
+    ball = make_ball(100.0, 40.0, vx=30.0)
+    path = ball.trace_path()
+    assert len(path) == 3  # start, right-wall bounce, stop
+    _start, bounce, _stop = path
+    assert bounce.location[0] == pytest.approx(_RIGHT_WALL, abs=0.05)
+    assert bounce.location[1] == pytest.approx(40.0, abs=0.05)
+    assert bounce.velocity[0] < 0  # moving left after bounce
+    assert abs(bounce.velocity[1]) < 1e-6  # y-vel unchanged (no y-wall hit)
+    assert bounce.time > 0.0
+
+
+def test_trace_path_bounces_off_top_wall():
+    """Ball heading upward fast enough to hit the top boundary bounces back."""
+    # rest_y = 60 + 30/BALL_DRAG ≈ 111 — exceeds 79, so top-wall hit
+    ball = make_ball(60.0, 60.0, vy=30.0)
+    path = ball.trace_path()
+    assert len(path) == 3
+    _start, bounce, _stop = path
+    assert bounce.location[1] == pytest.approx(_TOP_WALL, abs=0.05)
+    assert bounce.velocity[1] < 0  # moving down after bounce
+    assert abs(bounce.velocity[0]) < 1e-6  # x-vel unchanged
+
+
+def test_trace_path_bounces_off_left_wall():
+    """Ball moving left hits the left boundary."""
+    ball = make_ball(20.0, 40.0, vx=-25.0)
+    path = ball.trace_path()
+    assert len(path) >= 3
+    bounce = path[1]
+    assert bounce.location[0] == pytest.approx(_LEFT_WALL, abs=0.05)
+    assert bounce.velocity[0] > 0  # reversed to rightward
+
+
+def test_trace_path_bounces_off_bottom_wall():
+    """Ball moving downward hits the bottom boundary."""
+    ball = make_ball(60.0, 20.0, vy=-25.0)
+    path = ball.trace_path()
+    assert len(path) >= 3
+    bounce = path[1]
+    assert bounce.location[1] == pytest.approx(_BOTTOM_WALL, abs=0.05)
+    assert bounce.velocity[1] > 0  # reversed to upward
+
+
+def test_trace_path_times_are_strictly_increasing():
+    """Every waypoint's cumulative time must be greater than the previous one."""
+    ball = make_ball(20.0, 40.0, vx=40.0, vy=30.0)
+    path = ball.trace_path()
+    assert len(path) >= 2
+    for i in range(len(path) - 1):
+        assert path[i].time < path[i + 1].time
+
+
+def test_trace_path_all_points_within_pitch_bounds():
+    """Every waypoint location must lie within valid pitch boundaries."""
+    ball = make_ball(60.0, 40.0, vx=50.0, vy=45.0)
+    path = ball.trace_path()
+    for pt in path:
+        assert _LEFT_WALL - 0.1 <= pt.location[0] <= _RIGHT_WALL + 0.1
+        assert _BOTTOM_WALL - 0.1 <= pt.location[1] <= _TOP_WALL + 0.1
+
+
+def test_trace_path_multiple_bounces():
+    """A very fast ball can bounce more than once before stopping."""
+    ball = make_ball(60.0, 40.0, vx=55.0, vy=45.0)
+    path = ball.trace_path()
+    # With speeds this high and the pitch size the ball bounces several times
+    assert len(path) >= 4  # start + at least 2 bounces + stop
+
+
+def test_trace_path_velocity_magnitude_decreases_at_each_bounce():
+    """Speed at each bounce should be strictly less than at the previous one (drag)."""
+    ball = make_ball(20.0, 40.0, vx=50.0, vy=0.0)
+    path = ball.trace_path()
+    speeds = [math.hypot(*pt.velocity) for pt in path[:-1]]  # exclude stopped point
+    for i in range(len(speeds) - 1):
+        assert speeds[i + 1] < speeds[i]
+
+
+def test_trace_path_diagonal_ball_hits_x_wall_first():
+    """When both x and y rests are outside, the nearer wall is hit first."""
+    # Ball at (105, 40) moving right (vx=20) and upward (vy=5).
+    # rest_x ≈ 105 + 34 = 139 > 119; rest_y ≈ 40 + 8.6 = 48.6 < 79
+    # → only x-wall is hit
+    ball = make_ball(105.0, 40.0, vx=20.0, vy=5.0)
+    path = ball.trace_path()
+    assert len(path) == 3
+    bounce = path[1]
+    assert bounce.location[0] == pytest.approx(_RIGHT_WALL, abs=0.05)
+
+
+# ── Bounce-aware intercept_time / intercept_point ─────────────────────────────
+
+
+def test_intercept_time_no_bounce_unchanged():
+    """intercept_time is unchanged for a ball that stays inside the pitch."""
+    player = make_player(1, 0.0, 40.0)
+    ball = make_ball(24.0, 40.0, vx=5.0)  # rest_x ≈ 33 — well inside pitch
+    t = player.intercept_time(ball)
+    assert math.isfinite(t)
+    assert t > 0.0
+
+
+def test_intercept_time_ball_bouncing_toward_player():
+    """Player to the left; ball bounces off right wall back toward them."""
+    # Ball at x=95 moving right with vx=25 → rest_x ≈ 95+43 = 138 > 119 → bounces
+    # After bounce ball heads left toward the player at x=40
+    ball = make_ball(95.0, 40.0, vx=25.0)
+    player = make_player(1, 40.0, 40.0)
+    t = player.intercept_time(ball)
+    assert math.isfinite(t)
+    assert t > 0.0
+    # Intercept point must be to the left of the right wall (post-bounce segment)
+    pt = player.intercept_point(ball)
+    assert pt[0] < _RIGHT_WALL
+
+
+def test_intercept_point_after_bounce_reachable_in_intercept_time():
+    """Player can reach the intercept point in exactly intercept_time seconds."""
+    ball = make_ball(95.0, 40.0, vx=25.0)  # bounces off right wall
+    player = make_player(1, 50.0, 40.0)
+    t = player.intercept_time(ball)
+    pt = player.intercept_point(ball)
+    dist_to_pt = player.dist_to(pt)
+    # The quadratic guarantees exact equality; allow small floating-point slack.
+    assert dist_to_pt <= PLAYER_SPEED * t + 1e-3
+
+
+def test_intercept_time_behind_ball_heading_to_opposite_wall():
+    """Player waits near a wall; ball bounces toward them from the far side."""
+    # Ball at centre heading right; player near right wall — ball arrives directly,
+    # no wait needed.
+    ball = make_ball(60.0, 40.0, vx=15.0)  # rest ≈ 85.7 — inside pitch
+    player = make_player(1, 80.0, 40.0)
+    t_direct = player.intercept_time(ball)
+
+    # Now move ball to need a bounce: player on far left, ball heading right
+    ball2 = make_ball(90.0, 40.0, vx=25.0)  # bounces off right wall
+    player2 = make_player(1, 30.0, 40.0)
+    t_bounce = player2.intercept_time(ball2)
+
+    # After bounce the ball travels further — player has to wait longer
+    assert t_bounce > t_direct
+
+
+def test_intercept_point_on_post_bounce_segment_matches_ball_trajectory():
+    """Intercept point is consistent with constant-velocity projection on its segment."""
+    ball = make_ball(95.0, 40.0, vx=25.0)
+    player = make_player(1, 50.0, 40.0)
+    path = ball.trace_path()
+
+    t_total = player.intercept_time(ball)
+    pt = player.intercept_point(ball)
+
+    # Find which segment the intercept falls in and verify
+    for i in range(len(path) - 1):
+        seg = path[i]
+        seg_end = path[i + 1]
+        if seg.time <= t_total <= seg_end.time + 1e-9:
+            t_seg = t_total - seg.time
+            expected_x = seg.location[0] + seg.velocity[0] * t_seg
+            expected_y = seg.location[1] + seg.velocity[1] * t_seg
+            assert pt[0] == pytest.approx(expected_x, abs=1e-3)
+            assert pt[1] == pytest.approx(expected_y, abs=1e-3)
+            break
+    else:
+        pytest.fail("intercept time does not fall within any path segment")

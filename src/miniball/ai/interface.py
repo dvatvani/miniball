@@ -54,6 +54,7 @@ State API
 
     ball.projected_position(t)                    # where will the ball be in t seconds?
     ball.position_when_crossing_x(x)             # where will it be when it crosses x?
+    ball.trace_path()                             # list[BallPathPoint]: start + bounces + stop
     ball.closest_player(players)                  # nearest player to the ball (by distance)
     ball.interception_times(players)              # [(time, player), …] sorted fastest-first
     ball.fastest_interceptor(players)             # player who reaches ball soonest
@@ -104,16 +105,92 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 
 from miniball.config import (
     BALL_DRAG,
+    BALL_RADIUS,
     PLAYER_SPEED,
     STANDARD_PITCH_HEIGHT,
     STANDARD_PITCH_WIDTH,
 )
 
 _PLAYER_SPEED_SQ: float = PLAYER_SPEED * PLAYER_SPEED
+# Ball speed (units/s) below which it is treated as effectively stopped
+_BALL_STOP_SPEED: float = 0.1
+
+# Effective pitch boundaries for the ball centre (keeps ball_radius from walls)
+_WALL_LEFT: float = BALL_RADIUS
+_WALL_RIGHT: float = STANDARD_PITCH_WIDTH - BALL_RADIUS
+_WALL_BOTTOM: float = BALL_RADIUS
+_WALL_TOP: float = STANDARD_PITCH_HEIGHT - BALL_RADIUS
+
+
+def _time_to_wall(pos0: float, vel0: float, wall: float) -> float | None:
+    """Time for a 1-D coordinate to reach *wall* under linear drag.
+
+    Assumes *vel0* is moving toward *wall* (same sign as ``wall - pos0``).
+    Returns ``None`` when drag brings the ball to rest before it reaches the
+    wall (i.e. the maximum displacement ``vel0 / BALL_DRAG`` falls short).
+    """
+    arg = 1.0 - (wall - pos0) * BALL_DRAG / vel0
+    return -math.log(arg) / BALL_DRAG if arg > 0.0 else None
+
+
+def _segment_intercept_t(
+    px: float,
+    py: float,
+    seg_lx: float,
+    seg_ly: float,
+    seg_vx: float,
+    seg_vy: float,
+    seg_t0: float,
+) -> float | None:
+    """Smallest non-negative segment-local time at which a player can intercept the ball.
+
+    Solves the generalised quadratic arising when the ball segment starts at
+    cumulative time *seg_t0* rather than zero:
+
+        |seg_loc + seg_vel·t_seg − player|² = PLAYER_SPEED² · (seg_t0 + t_seg)²
+
+    Expanding and rearranging:
+
+        A·t² + B·t + C = 0
+        A = |V|²  − PLAYER_SPEED²
+        B = 2·(d·V − PLAYER_SPEED²·seg_t0)   (d = seg_loc − player)
+        C = |d|²  − PLAYER_SPEED²·seg_t0²
+
+    When *seg_t0 = 0* this reduces to the original single-segment quadratic.
+
+    Returns ``None`` when no non-negative solution exists.
+    """
+    dx = seg_lx - px
+    dy = seg_ly - py
+
+    A = seg_vx * seg_vx + seg_vy * seg_vy - _PLAYER_SPEED_SQ
+    B = 2.0 * (dx * seg_vx + dy * seg_vy - _PLAYER_SPEED_SQ * seg_t0)
+    C = dx * dx + dy * dy - _PLAYER_SPEED_SQ * seg_t0 * seg_t0
+
+    # C ≤ 0 means the player can already reach the segment start by seg_t0.
+    if C <= 1e-9:
+        return 0.0
+
+    if abs(A) < 1e-9:
+        # Ball speed ≈ player speed → linear equation B·t + C = 0
+        if abs(B) < 1e-9:
+            return None
+        t = -C / B
+        return t if t >= 0.0 else None
+
+    disc = B * B - 4.0 * A * C
+    if disc < 0.0:
+        return None
+    sqrt_disc = math.sqrt(disc)
+    t1 = (-B - sqrt_disc) / (2.0 * A)
+    t2 = (-B + sqrt_disc) / (2.0 * A)
+    positives = [t for t in (t1, t2) if t >= 0.0]
+    return min(positives) if positives else None
+
 
 # ── State classes ─────────────────────────────────────────────────────────────
 
@@ -186,60 +263,62 @@ class PlayerState:
     def intercept_time(self, ball: BallState) -> float:
         """Minimum time (seconds) until this player can reach the ball.
 
-        Uses a constant-velocity approximation (drag is ignored) to reduce
-        the problem to a quadratic:
+        Uses a constant-velocity approximation within each segment of the
+        ball's traced path (see :meth:`BallState.trace_path`).  Wall bounces
+        are handled by iterating over segments in order and solving the
+        generalised quadratic for each one:
 
             A·t² + B·t + C = 0
-            A = |V|² − PLAYER_SPEED²
-            B = 2 · (d · V)          (d = ball_pos − player_pos)
-            C = |d|²
+            A = |V|²  − PLAYER_SPEED²
+            B = 2·(d·V − PLAYER_SPEED²·t₀)   (d = seg_loc − player, t₀ = seg start time)
+            C = |d|²  − PLAYER_SPEED²·t₀²
 
-        The smallest non-negative root is returned.  When the ball is moving
-        faster than the player and no finite constant-velocity intercept exists
-        (negative discriminant, or no positive root), the method falls back to
-        the time required to reach the ball's *current* position — an optimistic
-        lower bound that keeps player rankings sensible.
+        The first segment whose solution lies within the segment's duration
+        determines the intercept.  If the ball is stopped before the player
+        arrives, the time to walk to the stopped position is returned instead.
         """
-        dx = ball.location[0] - self.location[0]
-        dy = ball.location[1] - self.location[1]
-        dist_sq = dx * dx + dy * dy
+        px, py = self.location
+        path = ball.trace_path()
 
-        if dist_sq < 1e-12:
-            return 0.0
+        for i in range(len(path) - 1):
+            seg = path[i]
+            seg_duration = path[i + 1].time - seg.time
+            lx, ly = seg.location
+            vx, vy = seg.velocity
 
-        vx, vy = ball.velocity
-        A = vx * vx + vy * vy - _PLAYER_SPEED_SQ
-        B = 2.0 * (dx * vx + dy * vy)
-        C = dist_sq  # always > 0 here
+            t_seg = _segment_intercept_t(px, py, lx, ly, vx, vy, seg.time)
+            if t_seg is not None and t_seg <= seg_duration + 1e-9:
+                return seg.time + t_seg
 
-        if abs(A) < 1e-9:
-            # Ball speed ≈ player speed → linear equation
-            t = -C / B if abs(B) > 1e-9 else None
-        else:
-            disc = B * B - 4.0 * A * C
-            if disc < 0.0:
-                t = None  # ball faster than player, no constant-vel solution
-            else:
-                sqrt_disc = math.sqrt(disc)
-                t1 = (-B - sqrt_disc) / (2.0 * A)
-                t2 = (-B + sqrt_disc) / (2.0 * A)
-                positives = [ti for ti in (t1, t2) if ti >= 0.0]
-                t = min(positives) if positives else None
-
-        # Fallback: time to reach ball's current position (optimistic estimate)
-        return t if t is not None else math.sqrt(dist_sq) / PLAYER_SPEED
+        # Ball permanently stopped at path[-1]; player walks there.
+        stop = path[-1]
+        slx, sly = stop.location
+        walk_time = math.hypot(slx - px, sly - py) / PLAYER_SPEED
+        return max(walk_time, stop.time)
 
     def intercept_point(self, ball: BallState) -> tuple[float, float]:
         """Position where this player will meet the ball at the earliest opportunity.
 
-        Projects the ball forward at constant velocity for ``intercept_time``
-        seconds.  Pass the result to ``direction_to`` to move toward it::
+        Traces the ball's path (including wall bounces) and returns the point
+        on the first reachable segment at which the player can intercept.
+        Pass the result to ``direction_to`` to move toward it::
 
             action = player.direction_to(player.intercept_point(ball))
         """
-        t = self.intercept_time(ball)
-        vx, vy = ball.velocity
-        return (ball.location[0] + vx * t, ball.location[1] + vy * t)
+        px, py = self.location
+        path = ball.trace_path()
+
+        for i in range(len(path) - 1):
+            seg = path[i]
+            seg_duration = path[i + 1].time - seg.time
+            lx, ly = seg.location
+            vx, vy = seg.velocity
+
+            t_seg = _segment_intercept_t(px, py, lx, ly, vx, vy, seg.time)
+            if t_seg is not None and t_seg <= seg_duration + 1e-9:
+                return (lx + vx * t_seg, ly + vy * t_seg)
+
+        return path[-1].location
 
     def closest_player(
         self,
@@ -267,6 +346,22 @@ class PlayerState:
         side = "home" if self.is_home else "away"
         role = "team" if self.is_teammate else "opp"
         return f"PlayerState({side}/{role}#{self.number} @ {self.location})"
+
+
+class BallPathPoint(NamedTuple):
+    """A single waypoint in the ball's traced path.
+
+    *location* and *velocity* are in the same coordinate frame as the parent
+    ``BallState``.  *time* is the cumulative number of seconds from the moment
+    ``trace_path`` was called.
+
+    For bounce waypoints the velocity is the **post-bounce** value; for the
+    final (stopped) waypoint the velocity is ``(0.0, 0.0)``.
+    """
+
+    location: tuple[float, float]
+    velocity: tuple[float, float]
+    time: float  # cumulative seconds from trace start
 
 
 class BallState:
@@ -314,6 +409,121 @@ class BallState:
             return None
         t = (x - self.location[0]) / self.velocity[0]
         return self.projected_position(t)
+
+    def trace_path(self, max_bounces: int = 10) -> list[BallPathPoint]:
+        """Trace the ball's full path under drag, including wall bounces.
+
+        Returns a list of :class:`BallPathPoint` waypoints::
+
+            [start, bounce₁, bounce₂, …, stop]
+
+        * **start** — the ball's current position and velocity (``time = 0``).
+        * **bounce** — position and *post-bounce* velocity at each wall collision.
+        * **stop** — where the ball effectively comes to rest (speed below
+          ``_BALL_STOP_SPEED``); velocity is ``(0.0, 0.0)``.
+
+        Each waypoint's ``time`` is the cumulative seconds from *now*.
+
+        The list always contains at least two entries (start + stop), even for
+        a stationary or very slow ball.
+
+        Bounce reflection rules:
+        * Left / right wall  → x-velocity is negated.
+        * Top / bottom wall  → y-velocity is negated.
+
+        *max_bounces* caps the number of wall reflections computed (default 10)
+        as a safety limit; in practice a ball will decelerate to near-rest long
+        before this.
+        """
+        x, y = self.location
+        vx, vy = self.velocity
+        t_cum = 0.0
+
+        path: list[BallPathPoint] = [BallPathPoint((x, y), (vx, vy), t_cum)]
+
+        for _ in range(max_bounces):
+            speed = math.hypot(vx, vy)
+            if speed < _BALL_STOP_SPEED:
+                # Already effectively stopped; path ends at current point.
+                break
+
+            # Rest position under drag: x₀ + vx/k (as t → ∞)
+            rest_x = x + vx / BALL_DRAG
+            rest_y = y + vy / BALL_DRAG
+
+            if (
+                _WALL_LEFT <= rest_x <= _WALL_RIGHT
+                and _WALL_BOTTOM <= rest_y <= _WALL_TOP
+            ):
+                # Ball decelerates to rest inside the pitch — append stop point.
+                t_stop = math.log(speed / _BALL_STOP_SPEED) / BALL_DRAG
+                decay = math.exp(-BALL_DRAG * t_stop)
+                factor = (1.0 - decay) / BALL_DRAG
+                path.append(
+                    BallPathPoint(
+                        (x + vx * factor, y + vy * factor),
+                        (0.0, 0.0),
+                        t_cum + t_stop,
+                    )
+                )
+                return path
+
+            # Find time to the relevant wall in each axis (only when moving toward it).
+            t_x = (
+                _time_to_wall(x, vx, _WALL_RIGHT if vx > 0.0 else _WALL_LEFT)
+                if abs(vx) > 1e-9
+                else None
+            )
+            t_y = (
+                _time_to_wall(y, vy, _WALL_TOP if vy > 0.0 else _WALL_BOTTOM)
+                if abs(vy) > 1e-9
+                else None
+            )
+
+            if t_x is None and t_y is None:
+                # Neither wall reachable under drag (shouldn't happen when rest is outside).
+                break
+
+            # Take the earliest wall hit; prefer x-wall on tie.
+            if t_x is not None and (t_y is None or t_x <= t_y):
+                t_hit, hit_x_wall = t_x, True
+            else:
+                # t_y is not None here: guaranteed by the `break` above which
+                # exits when both are None, so the else branch is only reached
+                # when t_x is None (→ t_y must be non-None) or t_y < t_x.
+                assert t_y is not None
+                t_hit, hit_x_wall = t_y, False
+
+            decay = math.exp(-BALL_DRAG * t_hit)
+            factor = (1.0 - decay) / BALL_DRAG
+            new_x = x + vx * factor
+            new_y = y + vy * factor
+
+            if hit_x_wall:
+                new_vx, new_vy = -vx * decay, vy * decay
+            else:
+                new_vx, new_vy = vx * decay, -vy * decay
+
+            t_cum += t_hit
+            x, y = new_x, new_y
+            vx, vy = new_vx, new_vy
+            path.append(BallPathPoint((x, y), (vx, vy), t_cum))
+
+        # Safety fallback: ball still moving after max_bounces — append stop estimate.
+        speed = math.hypot(vx, vy)
+        if speed >= _BALL_STOP_SPEED:
+            t_stop = math.log(speed / _BALL_STOP_SPEED) / BALL_DRAG
+            decay = math.exp(-BALL_DRAG * t_stop)
+            factor = (1.0 - decay) / BALL_DRAG
+            path.append(
+                BallPathPoint(
+                    (x + vx * factor, y + vy * factor),
+                    (0.0, 0.0),
+                    t_cum + t_stop,
+                )
+            )
+
+        return path
 
     def closest_player(self, players: list[PlayerState]) -> PlayerState:
         """Return the player in ``players`` closest to the ball."""
