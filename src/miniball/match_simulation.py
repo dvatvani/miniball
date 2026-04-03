@@ -351,7 +351,13 @@ class MatchSimulation:
         for p in self.all_players:
             p.tick(dt)
 
-        # 2. Build game states and compute effective actions (AI + human override).
+        # 2. Loose-ball pickup: assign possession to the closest eligible player
+        #    before AI decisions are made.  This ensures the receiving player sees
+        #    themselves holding the ball when their AI runs in step 3, giving them
+        #    a chance to act (pass, clear) before any tackle check.
+        self._pickup_loose_ball()
+
+        # 3. Build game states and compute effective actions (AI + human override).
         home_team_state = self._build_game_state(True)
         away_team_state = self._build_game_state(False)
         effective_a = self._get_team_actions(
@@ -361,7 +367,7 @@ class MatchSimulation:
             self._ai_b, away_team_state, is_home_team=False, human_input=human_input
         )
 
-        # 3. Record this frame for post-game analytics.
+        # 4. Record this frame for post-game analytics.
         self._history.append(
             FrameRecord(
                 game_time=GAME_DURATION - self._time_remaining,
@@ -376,21 +382,23 @@ class MatchSimulation:
             )
         )
 
-        # 4. Apply effective actions; team vectors are converted from the team
+        # 5. Apply effective actions; team vectors are converted from the team
         #    frame to global coordinates inside _apply_actions.
         self._apply_actions(self.team_a, effective_a, dt, is_home=True)
         self._apply_actions(self.team_b, effective_b, dt, is_home=False)
 
-        # 5. Clamp all players to pitch, resolve collisions, clamp again.
+        # 6. Clamp players, resolve tackles, resolve collisions, clamp again.
+        #    Tackle check runs after actions so the possessor's strike (step 5)
+        #    pre-empts the tackle: if they passed, possessed_by is already None.
         self._clamp_players()
-        self._update_possession()
+        self._resolve_tackles()
         self._resolve_player_collisions()
         self._clamp_players()
 
-        # 6. Update ball (tracks possessor or advances with physics).
+        # 7. Update ball (tracks possessor or advances with physics).
         self.ball.update(dt)
 
-        # 7. Goal detection.
+        # 8. Goal detection.
         self._check_goals()
 
     def simulate_match(self, dt: float = 1 / 60) -> pl.DataFrame | None:
@@ -542,31 +550,54 @@ class MatchSimulation:
         self.ball.vy = math.sin(player.facing) * STRIKE_SPEED
         player.cooldown_timer = max(player.cooldown_timer, STRIKE_COOLDOWN)
 
-    def _update_possession(self) -> None:
-        possessor = self.ball.possessed_by
+    def _pickup_loose_ball(self) -> None:
+        """Assign a loose ball to the closest eligible player within pickup range.
 
-        if possessor is not None:
-            for p in self.all_players:
-                if p.is_home == possessor.is_home:
-                    continue
-                if not p.can_gain_possession:
-                    continue
-                dist = math.hypot(p.x - possessor.x, p.y - possessor.y)
-                if dist < PLAYER_RADIUS * 2:
-                    old = possessor
-                    self.ball.possessed_by = p
-                    old.cooldown_timer = TACKLE_COOLDOWN
-                    break
-        else:
-            for p in self.all_players:
-                if not p.can_gain_possession:
-                    continue
-                dist = math.hypot(self.ball.x - p.x, self.ball.y - p.y)
-                if dist < PLAYER_RADIUS + BALL_RADIUS:
-                    self.ball.possessed_by = p
-                    self.ball.vx = 0.0
-                    self.ball.vy = 0.0
-                    break
+        Called *before* AI decisions so the receiving player can act (pass,
+        clear) in the same frame they receive the ball.
+
+        When multiple players are within ``PLAYER_RADIUS + BALL_RADIUS``, the
+        one physically closest to the ball wins — no home/away ordering bias.
+        """
+        if self.ball.possessed_by is not None:
+            return
+        candidates = [
+            p
+            for p in self.all_players
+            if p.can_gain_possession
+            and math.hypot(self.ball.x - p.x, self.ball.y - p.y)
+            < PLAYER_RADIUS + BALL_RADIUS
+        ]
+        if not candidates:
+            return
+        winner = min(
+            candidates, key=lambda p: math.hypot(self.ball.x - p.x, self.ball.y - p.y)
+        )
+        self.ball.possessed_by = winner
+        self.ball.vx = 0.0
+        self.ball.vy = 0.0
+
+    def _resolve_tackles(self) -> None:
+        """Transfer possession when a defender is within tackle range of the possessor.
+
+        Called *after* actions are applied so a strike (pass or clearance) in
+        the same frame pre-empts the tackle: if the possessor released the ball,
+        ``possessed_by`` is already ``None`` and this is a no-op.
+        """
+        possessor = self.ball.possessed_by
+        if possessor is None:
+            return
+        for p in self.all_players:
+            if p.is_home == possessor.is_home:
+                continue
+            if not p.can_gain_possession:
+                continue
+            dist = math.hypot(p.x - possessor.x, p.y - possessor.y)
+            if dist < PLAYER_RADIUS * 2:
+                old = possessor
+                self.ball.possessed_by = p
+                old.cooldown_timer = TACKLE_COOLDOWN
+                break
 
     def _resolve_player_collisions(self) -> None:
         players = self.all_players
