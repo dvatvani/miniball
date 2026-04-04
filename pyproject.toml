@@ -29,7 +29,7 @@ dev = [
     "ruff==0.14.14",
     "sqlglot==28.10.0",
     "typing-extensions==4.15.0",
-    "marimo==0.19.9",
+    "marimo==0.22.0",
     "polars==1.37.1",
     "seaborn==0.13.2",
     "ty==0.0.14",

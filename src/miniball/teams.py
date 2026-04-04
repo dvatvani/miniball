@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from miniball.ai import BallChasersAI, BaseAI, BaselineAI, StationaryAI
 from miniball.config import STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
+
+# Characters that are illegal or problematic in file paths on macOS, Linux, or Windows.
+_UNSAFE_FILENAME_RE = re.compile(r'[/\\:*?"<>|\x00\r\n]')
 
 
 @dataclass
@@ -54,6 +58,11 @@ class Team:
         )
         assert len(set(p.number for p in self.players)) == len(self.players), (
             "Players must have unique numbers"
+        )
+        assert len(name) <= 30, "Team name must be 30 characters or fewer"
+        assert not _UNSAFE_FILENAME_RE.search(name), (
+            f"Team name {name!r} contains invalid characters"
+            r"(forbidden: / \ : * ? \" < > | and control characters)"
         )
 
 

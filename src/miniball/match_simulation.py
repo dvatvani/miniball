@@ -66,7 +66,7 @@ from miniball.coordinate_transformations import (
     team_delta_to_global,
     team_to_global,
 )
-from miniball.teams import Team
+from miniball.teams import Team, teams
 
 console = Console()
 
@@ -774,7 +774,11 @@ class MatchSimulation:
         out_dir.mkdir(exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         unique_id = str(uuid.uuid4())[:8]
-        path = out_dir / f"match_{timestamp}_{unique_id}.parquet"
+        match_result = _df_to_match_result(df)
+        path = (
+            out_dir
+            / f"match_{timestamp}_{match_result.home_team}_{match_result.away_team}_{match_result.home_goals}-{match_result.away_goals}_{unique_id}.parquet"
+        )
         df.with_columns(
             # Spatial / physics – float32
             pl.col("pos_x").cast(pl.Float32),
@@ -835,8 +839,8 @@ class FrameSnapshot:
     actions_b: TeamActions
 
 
-def reconstruct_frames(path: str | Path) -> list[FrameSnapshot]:
-    """Read a match parquet file and reconstruct per-frame native objects.
+def reconstruct_frames(df: pl.DataFrame) -> list[FrameSnapshot]:
+    """Reconstruct per-frame native objects from a match DataFrame.
 
     The returned ``FrameSnapshot`` list mirrors what the simulation engine
     produces internally each frame, making it straightforward to replay a
@@ -845,8 +849,8 @@ def reconstruct_frames(path: str | Path) -> list[FrameSnapshot]:
 
     Parameters
     ----------
-    path:
-        Path to a parquet file produced by ``MatchSimulation.build_match_df``.
+    df:
+        polars DataFrame produced by ``MatchSimulation.build_match_df``.
 
     Returns
     -------
@@ -856,7 +860,6 @@ def reconstruct_frames(path: str | Path) -> list[FrameSnapshot]:
     from miniball.config import STANDARD_PITCH_HEIGHT as _H
     from miniball.config import STANDARD_PITCH_WIDTH as _W
 
-    df = pl.read_parquet(path)
     snapshots: list[FrameSnapshot] = []
 
     for frame_df in df.sort("frame_number").partition_by(
@@ -978,6 +981,17 @@ def reconstruct_frames(path: str | Path) -> list[FrameSnapshot]:
     return snapshots
 
 
+def load_match(
+    path: str | Path,
+) -> tuple[MatchResult, pl.DataFrame, list[FrameSnapshot]]:
+    """Load a match from a parquet file and return the home and away teams and the list of frame snapshots."""
+    df = pl.read_parquet(path)
+    snapshots = reconstruct_frames(df)
+    match_result = _df_to_match_result(df)
+
+    return match_result, df, snapshots
+
+
 # ── Parallel fixture runner ───────────────────────────────────────────────────
 
 
@@ -989,6 +1003,19 @@ class MatchResult:
     away_team: str
     home_goals: int
     away_goals: int
+
+
+def _df_to_match_result(df: pl.DataFrame) -> MatchResult:
+    """Convert a match DataFrame to a MatchResult."""
+    home_team_name = df.filter(pl.col("is_home")).row(0, named=True)["team"]
+    away_team_name = df.filter(~pl.col("is_home")).row(0, named=True)["team"]
+    last = df.filter(pl.col("is_home")).tail(1).row(0, named=True)
+    return MatchResult(
+        home_team_name,
+        away_team_name,
+        int(last["team_score"]),
+        int(last["opposition_score"]),
+    )
 
 
 def _simulate_match(
@@ -1005,17 +1032,8 @@ def _simulate_match(
 
     if save_data:
         sim._write_parquet(df, verbose=False)
-
-    # Final scores sit in the last row of any home-team player's records.
-    # team_score / opposition_score are always from the perspective of is_home.
-    last = df.filter(pl.col("is_home")).tail(1).row(0, named=True)
-
-    return MatchResult(
-        home_team=home_team.name,
-        away_team=away_team.name,
-        home_goals=int(last["team_score"]),
-        away_goals=int(last["opposition_score"]),
-    )
+    match_result = _df_to_match_result(df)
+    return match_result
 
 
 def simulate_matches(

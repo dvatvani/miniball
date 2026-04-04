@@ -9,7 +9,7 @@ import scipy
 from matplotlib.path import Path
 
 from miniball.ai.interface import PlayerState
-from miniball.config import STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
+from miniball.config import PLAYER_RADIUS, STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
 
 
 def bounded_voronoi(
@@ -79,6 +79,16 @@ def centroid_region(vertices):
     return np.array([C_x, C_y])
 
 
+def _dist_point_to_segment(p: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
+    """Minimum distance from point *p* to line segment *ab*."""
+    ab = b - a
+    len_sq = float(np.dot(ab, ab))
+    if len_sq < 1e-12:
+        return float(np.linalg.norm(p - a))
+    t = np.clip(float(np.dot(p - a, ab)) / len_sq, 0.0, 1.0)
+    return float(np.linalg.norm(p - (a + t * ab)))
+
+
 def location_in_polygon(location: Sequence[float], polygon: np.ndarray) -> bool:
     """Return ``True`` if ``location`` lies inside ``polygon``.
 
@@ -97,14 +107,26 @@ def location_in_polygon(location: Sequence[float], polygon: np.ndarray) -> bool:
 
 
 def player_in_polygon(player: PlayerState, polygon: np.ndarray) -> bool:
-    """Return ``True`` if the player's location is inside ``polygon``."""
-    return location_in_polygon(player.location, polygon)
+    """Return ``True`` if any part of the player's disc overlaps ``polygon``.
+
+    Checks both centre containment (fast path) and whether the player's disc
+    (radius ``PLAYER_RADIUS``) intersects any edge of the polygon, so players
+    who straddle the boundary are correctly detected.
+    """
+    if location_in_polygon(player.location, polygon):
+        return True
+    p = np.asarray(player.location, dtype=float)
+    n = len(polygon)
+    return any(
+        _dist_point_to_segment(p, polygon[i], polygon[(i + 1) % n]) < PLAYER_RADIUS
+        for i in range(n)
+    )
 
 
 def players_in_polygon(
     players: list[PlayerState], polygon: np.ndarray
 ) -> list[PlayerState]:
-    """Return the subset of ``players`` whose location is inside ``polygon``."""
+    """Return the subset of ``players`` whose disc overlaps ``polygon``."""
     return [p for p in players if player_in_polygon(p, polygon)]
 
 

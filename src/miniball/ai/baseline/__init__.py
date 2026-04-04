@@ -1,3 +1,4 @@
+import math
 from collections.abc import Sequence
 
 import numpy as np
@@ -5,6 +6,12 @@ import numpy as np
 from miniball.ai.interface import BaseAI, GameState, PlayerState, TeamActions
 from miniball.ai.utils import dist, opposition_goal_center, player_closest_to_point
 from miniball.ai.utils.geometry import players_bounded_voronoi, players_in_polygon
+from miniball.config import (
+    BALL_RADIUS,
+    STANDARD_GOAL_HEIGHT,
+    STANDARD_PITCH_HEIGHT,
+    STANDARD_PITCH_WIDTH,
+)
 
 
 class BaselineAI(BaseAI):
@@ -39,7 +46,7 @@ class BaselineAI(BaseAI):
     STRIKE_RANGE: float = 40.0
     PRESSURE_RANGE: float = 10.0
     COVERAGE_FRACTION: float = 0.9
-    PASSING_LANE_ANGLE: float = np.radians(20)  # half-cone angle for pass lane check
+    PASSING_LANE_ANGLE: float = np.radians(30)  # angle for pass lane check
     _VORONOI_GRID_STEP: float = 5.0  # pitch units between grid sample points
 
     # ── Public interface ──────────────────────────────────────────────────────
@@ -57,7 +64,9 @@ class BaselineAI(BaseAI):
         return {
             pid: {
                 "direction": direction,
-                "strike": strike and pid == state.ball_carrier.number,
+                "strike": strike
+                and state.ball_carrier is not None
+                and pid == state.ball_carrier.number,
             }
             for pid, direction in directions.items()
         }
@@ -81,21 +90,20 @@ class BaselineAI(BaseAI):
         gk = state.players(teammates=True, include_goalkeepers=True)[0]
         directions[gk.number] = gk.direction_to(self.formation[gk.number])
 
-        # Strike if close enough to the goal
+        # Shoot if close enough to the goal
+        # Check which of near and far post is clearer and shoot in that direction.
         if state.ball_carrier.dist_to(opposition_goal_center()) <= self.STRIKE_RANGE:
+            shot_placement_location = self._determine_shot_placement(state)
+
             directions[state.ball_carrier.number] = state.ball_carrier.direction_to(
-                opposition_goal_center()
+                shot_placement_location
             )
+
             strike = True
 
         # Otherwise, look for a clear passing lane, and clear the ball if under pressure
         else:
-            forward_target = self._passing_lane_pass_target(
-                state.ball_carrier,
-                state.team,
-                state.opposition,
-                min_x=state.ball_carrier.location[0],
-            )
+            forward_target = self._find_pass_target(state)
             under_pressure = (
                 state.ball_carrier.dist_to(
                     state.ball_carrier.closest_player(state.opposition).location
@@ -130,7 +138,9 @@ class BaselineAI(BaseAI):
     ) -> dict[int, tuple[float, float]]:
         directions: dict[int, tuple[float, float]] = {}
 
-        closest = state.ball.fastest_interceptor(state.team)
+        closest = state.ball.fastest_interceptor(
+            state.players(teammates=True, opposition=False)
+        )
         for p in state.team:
             # Move the closest player toward the ball
             if p == closest:
@@ -142,6 +152,12 @@ class BaselineAI(BaseAI):
                     and state.ball.fastest_interceptor(state.all_players) != closest
                 ):
                     directions[p.number] = p.direction_to(self.formation[p.number])
+                # If the projected interception point is past the goal line, then move
+                # the player towards the point at which the ball would cross the goal line.
+                if p.intercept_point(state.ball)[0] < 0:
+                    cross = state.ball.position_when_crossing_x(0)
+                    if cross is not None:
+                        directions[p.number] = p.direction_to((0, cross[1]))
 
             # move other players toward their zonal marking target
             else:
@@ -212,31 +228,24 @@ class BaselineAI(BaseAI):
         C = np.array([ex - px * half_width, ey - py * half_width])
         return np.array([A, B, C])
 
-    def _passing_lane_pass_target(
+    def _find_pass_target(
         self,
-        carrier: PlayerState,
-        teammates: list[PlayerState],
-        opponents: list[PlayerState],
-        min_x: float | None = None,
+        state: GameState,
     ) -> PlayerState | None:
         """Return the furthest-forward teammate reachable via a clear passing lane.
 
-        For each forward teammate a triangular corridor is built with
+        For each teammate a triangular corridor is built with
         ``_build_passing_lane_polygon``.  A lane is *clear* when no opponent
         falls inside it.  The most forward teammate with a clear lane is
         returned, or ``None`` if no clear lane exists.
-
-        Parameters
-        ----------
-        min_x:
-            When provided, only teammates with ``x > min_x`` are considered.
-            Pass the carrier's x to restrict to players further forward.
         """
-        candidates = [
-            t
-            for t in teammates
-            if t.number != carrier.number and (min_x is None or t.location[0] > min_x)
-        ]
+        assert state.ball_carrier is not None
+        candidates = state.players(
+            teammates=True,
+            opposition=False,
+            player_on_ball=False,
+            players_on_cooldown=False,
+        )
         if not candidates:
             return None
 
@@ -245,9 +254,55 @@ class BaselineAI(BaseAI):
 
         for target in candidates:
             polygon = self._build_passing_lane_polygon(
-                carrier.location, target.location, self.PASSING_LANE_ANGLE
+                state.ball_carrier.location, target.location, self.PASSING_LANE_ANGLE
             )
-            if not players_in_polygon(opponents, polygon):
+            if not players_in_polygon(state.opposition, polygon):
                 return target
 
         return None
+
+    def _determine_shot_placement(self, state: GameState) -> tuple[float, float]:
+        """Return the location to shoot the ball towards.
+
+        For each candidate (top and bottom corners of the goal mouth), compute
+        the smallest angle ``candidate – ball – opponent`` across all opponents.
+        The candidate whose minimum clearance angle is largest is chosen — i.e.
+        the shot with the widest angular gap past all defenders.
+        """
+        assert state.ball_carrier is not None
+        shot_placement_candidates: list[tuple[float, float]] = [
+            (
+                STANDARD_PITCH_WIDTH,
+                STANDARD_PITCH_HEIGHT / 2
+                + STANDARD_GOAL_HEIGHT / 2
+                - BALL_RADIUS * 1.5,
+            ),
+            (
+                STANDARD_PITCH_WIDTH,
+                STANDARD_PITCH_HEIGHT / 2
+                - STANDARD_GOAL_HEIGHT / 2
+                + BALL_RADIUS * 1.5,
+            ),
+        ]
+
+        bx, by = state.ball_carrier.location
+
+        def min_clearance_angle(candidate: tuple[float, float]) -> float:
+            """Smallest angle between the ball→candidate ray and any ball→opponent ray."""
+            cx, cy = candidate
+            dcx, dcy = cx - bx, cy - by
+            len_c = math.hypot(dcx, dcy)
+            if len_c < 1e-9:
+                return 0.0
+            min_angle = math.pi
+            for opp in state.opposition:
+                ox, oy = opp.location
+                dox, doy = ox - bx, oy - by
+                len_o = math.hypot(dox, doy)
+                if len_o < 1e-9:
+                    return 0.0  # opponent at ball position: no clearance
+                cos_a = (dcx * dox + dcy * doy) / (len_c * len_o)
+                min_angle = min(min_angle, math.acos(max(-1.0, min(1.0, cos_a))))
+            return min_angle
+
+        return max(shot_placement_candidates, key=min_clearance_angle)

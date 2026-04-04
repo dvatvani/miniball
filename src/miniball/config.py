@@ -10,7 +10,7 @@ STANDARD_PITCH_WIDTH = 120
 STANDARD_PITCH_HEIGHT = 80
 
 # Goal dimensions in normalised "global" coordinates
-STANDARD_GOAL_HEIGHT = 12  # vertical opening of each goal
+STANDARD_GOAL_HEIGHT = 18  # vertical opening of each goal
 STANDARD_GOAL_DEPTH = 4  # how far the goal box extends behind the goal line
 
 
