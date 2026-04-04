@@ -16,6 +16,7 @@ from miniball.config import (
     BALL_DRAG,
     BALL_RADIUS,
     PLAYER_SPEED,
+    STANDARD_GOAL_HEIGHT,
     STANDARD_PITCH_HEIGHT,
     STANDARD_PITCH_WIDTH,
 )
@@ -508,13 +509,14 @@ def test_trace_path_ball_stops_inside_pitch():
 
 def test_trace_path_bounces_off_right_wall():
     """Ball heading right fast enough to hit the right boundary bounces back."""
-    # rest_x = 100 + 30/BALL_DRAG ≈ 151 — exceeds 119, so right-wall hit
-    ball = make_ball(100.0, 40.0, vx=30.0)
+    # rest_x = 100 + 30/BALL_DRAG ≈ 151 — exceeds 119, so right-wall hit.
+    # y=10 keeps the ball well outside the goal mouth [34, 46].
+    ball = make_ball(100.0, 10.0, vx=30.0)
     path = ball.trace_path()
     assert len(path) == 3  # start, right-wall bounce, stop
     _start, bounce, _stop = path
     assert bounce.location[0] == pytest.approx(_RIGHT_WALL, abs=0.05)
-    assert bounce.location[1] == pytest.approx(40.0, abs=0.05)
+    assert bounce.location[1] == pytest.approx(10.0, abs=0.05)
     assert bounce.velocity[0] < 0  # moving left after bounce
     assert abs(bounce.velocity[1]) < 1e-6  # y-vel unchanged (no y-wall hit)
     assert bounce.time > 0.0
@@ -533,8 +535,8 @@ def test_trace_path_bounces_off_top_wall():
 
 
 def test_trace_path_bounces_off_left_wall():
-    """Ball moving left hits the left boundary."""
-    ball = make_ball(20.0, 40.0, vx=-25.0)
+    """Ball moving left hits the left boundary (y=10, outside goal mouth [34,46])."""
+    ball = make_ball(20.0, 10.0, vx=-25.0)
     path = ball.trace_path()
     assert len(path) >= 3
     bounce = path[1]
@@ -588,11 +590,15 @@ def test_trace_path_velocity_magnitude_decreases_at_each_bounce():
 
 
 def test_trace_path_diagonal_ball_hits_x_wall_first():
-    """When both x and y rests are outside, the nearer wall is hit first."""
-    # Ball at (105, 40) moving right (vx=20) and upward (vy=5).
-    # rest_x ≈ 105 + 34 = 139 > 119; rest_y ≈ 40 + 8.6 = 48.6 < 79
-    # → only x-wall is hit
-    ball = make_ball(105.0, 40.0, vx=20.0, vy=5.0)
+    """When both x and y rests are outside, the nearer wall is hit first.
+
+    y=10 keeps the ball outside the goal mouth [34, 46] so an x-wall bounce
+    occurs rather than a goal passage.
+    """
+    # Ball at (105, 10) moving right (vx=20) and upward (vy=5).
+    # rest_x ≈ 105 + 34 = 139 > 119; rest_y ≈ 10 + 8.6 = 18.6 < 79
+    # y at x-wall ≈ 13.5 — not in goal range → only x-wall is hit
+    ball = make_ball(105.0, 10.0, vx=20.0, vy=5.0)
     path = ball.trace_path()
     assert len(path) == 3
     bounce = path[1]
@@ -612,11 +618,14 @@ def test_intercept_time_no_bounce_unchanged():
 
 
 def test_intercept_time_ball_bouncing_toward_player():
-    """Player to the left; ball bounces off right wall back toward them."""
-    # Ball at x=95 moving right with vx=25 → rest_x ≈ 95+43 = 138 > 119 → bounces
-    # After bounce ball heads left toward the player at x=40
-    ball = make_ball(95.0, 40.0, vx=25.0)
-    player = make_player(1, 40.0, 40.0)
+    """Player to the left; ball bounces off right wall back toward them.
+
+    y=10 keeps the shot outside the goal mouth [34, 46] so a real wall
+    bounce occurs rather than the ball entering the goal.
+    """
+    # rest_x ≈ 95+43 = 138 > 119 → bounces off right wall at y ≈ 10
+    ball = make_ball(95.0, 10.0, vx=25.0)
+    player = make_player(1, 40.0, 10.0)
     t = player.intercept_time(ball)
     assert math.isfinite(t)
     assert t > 0.0
@@ -627,8 +636,8 @@ def test_intercept_time_ball_bouncing_toward_player():
 
 def test_intercept_point_after_bounce_reachable_in_intercept_time():
     """Player can reach the intercept point in exactly intercept_time seconds."""
-    ball = make_ball(95.0, 40.0, vx=25.0)  # bounces off right wall
-    player = make_player(1, 50.0, 40.0)
+    ball = make_ball(95.0, 10.0, vx=25.0)  # bounces off right wall (y outside goal)
+    player = make_player(1, 50.0, 10.0)
     t = player.intercept_time(ball)
     pt = player.intercept_point(ball)
     dist_to_pt = player.dist_to(pt)
@@ -639,14 +648,14 @@ def test_intercept_point_after_bounce_reachable_in_intercept_time():
 def test_intercept_time_behind_ball_heading_to_opposite_wall():
     """Player waits near a wall; ball bounces toward them from the far side."""
     # Ball at centre heading right; player near right wall — ball arrives directly,
-    # no wait needed.
+    # no wait needed.  y=40 is fine here because rest_x ≈ 85.7 < 119 (no wall hit).
     ball = make_ball(60.0, 40.0, vx=15.0)  # rest ≈ 85.7 — inside pitch
     player = make_player(1, 80.0, 40.0)
     t_direct = player.intercept_time(ball)
 
-    # Now move ball to need a bounce: player on far left, ball heading right
-    ball2 = make_ball(90.0, 40.0, vx=25.0)  # bounces off right wall
-    player2 = make_player(1, 30.0, 40.0)
+    # Ball bouncing scenario: y=10 to keep shot outside goal mouth [34, 46].
+    ball2 = make_ball(90.0, 10.0, vx=25.0)  # bounces off right wall
+    player2 = make_player(1, 30.0, 10.0)
     t_bounce = player2.intercept_time(ball2)
 
     # After bounce the ball travels further — player has to wait longer
@@ -655,8 +664,9 @@ def test_intercept_time_behind_ball_heading_to_opposite_wall():
 
 def test_intercept_point_on_post_bounce_segment_matches_ball_trajectory():
     """Intercept point is consistent with constant-velocity projection on its segment."""
-    ball = make_ball(95.0, 40.0, vx=25.0)
-    player = make_player(1, 50.0, 40.0)
+    # y=10 so ball bounces off the right wall rather than entering the goal.
+    ball = make_ball(95.0, 10.0, vx=25.0)
+    player = make_player(1, 50.0, 10.0)
     path = ball.trace_path()
 
     t_total = player.intercept_time(ball)
@@ -675,3 +685,77 @@ def test_intercept_point_on_post_bounce_segment_matches_ball_trajectory():
             break
     else:
         pytest.fail("intercept time does not fall within any path segment")
+
+
+# ── Goal-opening: no bounce for on-target shots ────────────────────────────────
+
+_GOAL_LO = STANDARD_PITCH_HEIGHT / 2 - STANDARD_GOAL_HEIGHT / 2  # 34.0
+_GOAL_HI = STANDARD_PITCH_HEIGHT / 2 + STANDARD_GOAL_HEIGHT / 2  # 46.0
+_GOAL_MID = STANDARD_PITCH_HEIGHT / 2  # 40.0
+
+
+def test_trace_path_shot_into_right_goal_no_bounce():
+    """A shot heading into the right goal mouth must not produce an x-wall bounce."""
+    # Ball heading right toward the goal centre; rest_x >> 119 so it would
+    # have bounced under the old logic.
+    ball = make_ball(80.0, _GOAL_MID, vx=40.0)
+    path = ball.trace_path()
+    # All waypoints should be on the same (non-bouncing) segment — only start + stop.
+    assert len(path) == 2
+    # Final stop point must be to the RIGHT of the right wall (inside / behind goal).
+    assert path[-1].location[0] > _RIGHT_WALL
+
+
+def test_trace_path_shot_into_left_goal_no_bounce():
+    """A shot heading into the left goal mouth must not produce an x-wall bounce."""
+    ball = make_ball(40.0, _GOAL_MID, vx=-40.0)
+    path = ball.trace_path()
+    assert len(path) == 2
+    assert path[-1].location[0] < _LEFT_WALL
+
+
+def test_trace_path_shot_wide_of_goal_does_bounce():
+    """A shot at the right end-line but OUTSIDE the goal mouth must still bounce."""
+    # y = 10 is well below the goal opening [34, 46]
+    ball = make_ball(80.0, 10.0, vx=40.0)
+    path = ball.trace_path()
+    # Expect a right-wall bounce (len > 2)
+    assert len(path) >= 3
+    bounce = path[1]
+    assert bounce.location[0] == pytest.approx(_RIGHT_WALL, abs=0.1)
+    assert bounce.velocity[0] < 0  # bounced back
+
+
+def test_trace_path_diagonal_shot_hits_top_wall_then_goal():
+    """Ball angled toward goal but hitting top wall first: one top-wall bounce,
+    then passes through the goal without a second bounce."""
+    # Ball heading right-and-up steeply; top wall is hit before the goal side.
+    # After the bounce the ball's y might still be in the goal range.
+    ball = make_ball(80.0, 70.0, vx=15.0, vy=20.0)
+    path = ball.trace_path()
+    # First bounce must be off the top wall (y-velocity reversed)
+    assert path[1].location[1] == pytest.approx(_TOP_WALL, abs=0.1)
+    assert path[1].velocity[1] < 0  # deflected downward
+    # After the top-wall bounce the ball may or may not enter the goal depending
+    # on the exact geometry; the key invariant is that NO x-wall bounce appears
+    # (the last waypoint is never at x == _RIGHT_WALL with reversed vx).
+    for pt in path[1:]:
+        # No waypoint should be a right-wall bounce (vx < 0 at x ≈ 119)
+        if pt.velocity[0] < 0:
+            assert pt.location[0] != pytest.approx(_RIGHT_WALL, abs=1.0)
+
+
+def test_trace_path_goal_opening_boundary_just_inside():
+    """Ball aimed just inside the goal mouth (goal_lo + ε) does not bounce."""
+    ball = make_ball(80.0, _GOAL_LO + 0.5, vx=40.0)
+    path = ball.trace_path()
+    assert len(path) == 2
+    assert path[-1].location[0] > _RIGHT_WALL
+
+
+def test_trace_path_goal_opening_boundary_just_outside():
+    """Ball aimed just outside the goal mouth (goal_lo - ε) bounces normally."""
+    ball = make_ball(80.0, _GOAL_LO - 0.5, vx=40.0)
+    path = ball.trace_path()
+    assert len(path) >= 3
+    assert path[1].location[0] == pytest.approx(_RIGHT_WALL, abs=0.1)

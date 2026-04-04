@@ -111,6 +111,7 @@ from miniball.config import (
     BALL_DRAG,
     BALL_RADIUS,
     PLAYER_SPEED,
+    STANDARD_GOAL_HEIGHT,
     STANDARD_PITCH_HEIGHT,
     STANDARD_PITCH_WIDTH,
 )
@@ -124,6 +125,10 @@ _WALL_LEFT: float = BALL_RADIUS
 _WALL_RIGHT: float = STANDARD_PITCH_WIDTH - BALL_RADIUS
 _WALL_BOTTOM: float = BALL_RADIUS
 _WALL_TOP: float = STANDARD_PITCH_HEIGHT - BALL_RADIUS
+
+# Goal opening: y range of the goal mouth (same for both ends of the pitch)
+_GOAL_LO: float = STANDARD_PITCH_HEIGHT / 2 - STANDARD_GOAL_HEIGHT / 2
+_GOAL_HI: float = STANDARD_PITCH_HEIGHT / 2 + STANDARD_GOAL_HEIGHT / 2
 
 
 def _time_to_wall(pos0: float, vel0: float, wall: float) -> float | None:
@@ -430,6 +435,9 @@ class BallState:
         Bounce reflection rules:
         * Left / right wall  → x-velocity is negated.
         * Top / bottom wall  → y-velocity is negated.
+        * Goal openings      → no bounce; the trace stops and the final waypoint
+          is placed at the ball's drag-model rest position (which will overshoot
+          the goal line — this is intentional).
 
         *max_bounces* caps the number of wall reflections computed (default 10)
         as a safety limit; in practice a ball will decelerate to near-rest long
@@ -469,7 +477,7 @@ class BallState:
                 return path
 
             # Find time to the relevant wall in each axis (only when moving toward it).
-            t_x = (
+            t_x_raw = (
                 _time_to_wall(x, vx, _WALL_RIGHT if vx > 0.0 else _WALL_LEFT)
                 if abs(vx) > 1e-9
                 else None
@@ -479,6 +487,25 @@ class BallState:
                 if abs(vy) > 1e-9
                 else None
             )
+
+            # Check whether the x-wall hit is actually a goal opening.
+            # Compute the ball's y at the moment it reaches the left/right wall.
+            # If that y falls in the goal mouth and the ball gets there before any
+            # y-wall hit, stop tracing (no bounce off a goal); the fallback below
+            # will append the drag-model rest point behind the goal line.
+            # If a y-wall hit comes first, skip the x-wall this iteration so the
+            # y-bounce is processed; the goal check repeats on the next pass.
+            t_x = t_x_raw
+            if t_x_raw is not None:
+                decay_x = math.exp(-BALL_DRAG * t_x_raw)
+                factor_x = (1.0 - decay_x) / BALL_DRAG
+                y_at_x_wall = y + vy * factor_x
+                if _GOAL_LO <= y_at_x_wall <= _GOAL_HI:
+                    if t_y is None or t_x_raw <= t_y:
+                        # Ball enters goal before any y-wall — stop tracing.
+                        break
+                    # y-wall hit comes first; defer the goal check to next pass.
+                    t_x = None
 
             if t_x is None and t_y is None:
                 # Neither wall reachable under drag (shouldn't happen when rest is outside).
