@@ -38,17 +38,26 @@ COOLDOWN_ALPHA = 90  # draw opacity (0–255) while on cooldown (~35 %)
 JOY_DEAD_ZONE = 0.15  # ignore analogue stick values below this magnitude
 JOY_SWITCH_THRESHOLD = 0.7  # right-stick magnitude that triggers a player switch
 
-# ── Colours ──────────────────────────────────────────────────────────────────
-C_GRASS = (34, 139, 34)
+# ── Team colours ─────────────────────────────────────────────────────────────
+C_TEAM_A = (40, 110, 220)  # blue  – home (left side)
+C_TEAM_B = (220, 50, 50)  # red   – away (right side)
+
+# ── Pitch colour scheme (home = blue, away = red) ─────────────────────────────
+# Each pair: muted fill for the pitch half, vivid colour for boundary lines.
+C_PITCH_HOME = (25, 55, 120)  # muted blue – home half fill
+C_PITCH_AWAY = (120, 25, 25)  # muted red  – away half fill
+C_BORDER_HOME = (80, 155, 255)  # vivid blue – home boundary / goal lines
+C_BORDER_AWAY = (255, 80, 80)  # vivid red  – away boundary / goal lines
+C_GOAL_HOME = (35, 75, 160)  # medium blue – home goal fill
+C_GOAL_AWAY = (160, 35, 35)  # medium red  – away goal fill
+
+# ── Other colours ─────────────────────────────────────────────────────────────
 C_LINE = (255, 255, 255)
-C_GOAL = (220, 220, 220)
 C_BALL = (255, 255, 255)
 C_BALL_OUTLINE = (20, 20, 20)
 C_PLAYER_OUTLINE = (20, 20, 20)
-C_CONTROLLED = (255, 215, 0)  # yellow  – keyboard-controlled player
-C_POSSESSION = (255, 255, 255)  # white   – player who has the ball
-C_COOLDOWN_RING = (255, 160, 50)  # amber  – radial cooldown arc
-C_TEAM_A = (210, 40, 40)  # red   – left side
-C_TEAM_B = (30, 100, 200)  # blue  – right side
+C_CONTROLLED = (255, 215, 0)  # yellow – keyboard-controlled player
+C_POSSESSION = (255, 255, 255)  # white  – player who has the ball
+C_COOLDOWN_RING = (255, 160, 50)  # amber – radial cooldown arc
 C_HUD = (255, 255, 255)
 C_HINT = (180, 180, 180)

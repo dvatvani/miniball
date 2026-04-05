@@ -1,16 +1,17 @@
 """Miniball – 5-a-side football built with the arcade library.
 
 Top-down view, no sprites: players are coloured circles, the ball is a white
-circle.  One player (yellow ring) is controlled with the arrow keys.
+circle.  One player (yellow ring) can be controlled with the arrow keys
+or a gamepad.
 
 Possession model
 ────────────────
 • When a free ball touches any player, that player absorbs it instantly.
 • The ball sits at the possessor's front edge and travels with them.
-• An opposition player who is NOT stunned and whose body overlaps the
+• An opposition player who is NOT on cooldown and whose body overlaps the
   possessor's body steals possession immediately.
-• The player who lost the ball is frozen for STUN_DURATION seconds
-  (orange ring) and cannot gain possession while stunned.
+• The player who lost the ball is on cooldown for STRIKE_COOLDOWN or
+  TACKLE_COOLDOWN seconds and cannot gain possession while on cooldown.
 • The controlled player strikes with Space / gamepad button A: the ball is
   launched in the direction they are facing, and they get a brief pickup
   cooldown so they don't immediately re-absorb their own shot.
@@ -39,23 +40,26 @@ from miniball.simulation.engine import HumanInput, MatchSimulation, Player
 from miniball.teams import Team
 from miniball.ui.config import (
     C_BALL,
-    COOLDOWN_ALPHA,
-    JOY_DEAD_ZONE,
-    JOY_SWITCH_THRESHOLD,
     C_BALL_OUTLINE,
+    C_BORDER_AWAY,
+    C_BORDER_HOME,
     C_CONTROLLED,
     C_COOLDOWN_RING,
-    C_GOAL,
-    C_GRASS,
+    C_GOAL_AWAY,
+    C_GOAL_HOME,
     C_HINT,
     C_HUD,
     C_LINE,
+    C_PITCH_AWAY,
+    C_PITCH_HOME,
     C_PLAYER_OUTLINE,
-    C_POSSESSION,
     C_TEAM_A,
     C_TEAM_B,
+    COOLDOWN_ALPHA,
     GOAL_DEPTH,
     GOAL_H,
+    JOY_DEAD_ZONE,
+    JOY_SWITCH_THRESHOLD,
     PITCH_B,
     PITCH_CX,
     PITCH_CY,
@@ -142,11 +146,7 @@ class FootballGame(arcade.Window):
             self._draw_aim_line(self._controlled)
         self._draw_ball()
         for p in self.sim.all_players:
-            self._draw_player(
-                p,
-                highlight=(p is self._controlled),
-                has_ball=(self.sim.ball.possessed_by is p),
-            )
+            self._draw_player(p, highlight=(p is self._controlled))
         self._draw_hud()
 
     def _draw_ball(self) -> None:
@@ -154,9 +154,7 @@ class FootballGame(arcade.Window):
         arcade.draw_circle_filled(sx, sy, SCREEN_BALL_RADIUS, C_BALL)
         arcade.draw_circle_outline(sx, sy, SCREEN_BALL_RADIUS, C_BALL_OUTLINE, 2)
 
-    def _draw_player(
-        self, p: Player, highlight: bool = False, has_ball: bool = False
-    ) -> None:
+    def _draw_player(self, p: Player, highlight: bool = False) -> None:
         sx, sy = global_to_screen(p.x, p.y)
 
         if p.on_cooldown:
@@ -168,11 +166,6 @@ class FootballGame(arcade.Window):
             fill_color = p.color
             outline_color = C_PLAYER_OUTLINE
             text_color = C_LINE
-
-        if has_ball:
-            arcade.draw_circle_outline(
-                sx, sy, SCREEN_PLAYER_RADIUS + 5, C_POSSESSION, 3
-            )
 
         arcade.draw_circle_filled(sx, sy, SCREEN_PLAYER_RADIUS, fill_color)
         arcade.draw_circle_outline(sx, sy, SCREEN_PLAYER_RADIUS, outline_color, 2)
@@ -239,47 +232,64 @@ class FootballGame(arcade.Window):
         arcade.draw_line(start_sx, start_sy, end_sx, end_sy, (255, 255, 255, 50), 2)
 
     def _draw_pitch(self) -> None:
-        lw = 2
+        bw = 3  # boundary line width
         goal_lo = PITCH_CY - GOAL_H / 2
         goal_hi = PITCH_CY + GOAL_H / 2
 
-        arcade.draw_lrbt_rectangle_filled(PITCH_L, PITCH_R, PITCH_B, PITCH_T, C_GRASS)
-        arcade.draw_lrbt_rectangle_outline(
-            PITCH_L, PITCH_R, PITCH_B, PITCH_T, C_LINE, lw
-        )
-        arcade.draw_line(PITCH_CX, PITCH_B, PITCH_CX, PITCH_T, C_LINE, lw)
-        arcade.draw_circle_outline(PITCH_CX, PITCH_CY, 70, C_LINE, lw)
-        arcade.draw_circle_filled(PITCH_CX, PITCH_CY, 4, C_LINE)
-
-        pa_w, pa_h = 150, 260
-        arcade.draw_lrbt_rectangle_outline(
-            PITCH_L,
-            PITCH_L + pa_w,
-            PITCH_CY - pa_h / 2,
-            PITCH_CY + pa_h / 2,
-            C_LINE,
-            lw,
-        )
-        arcade.draw_lrbt_rectangle_outline(
-            PITCH_R - pa_w,
-            PITCH_R,
-            PITCH_CY - pa_h / 2,
-            PITCH_CY + pa_h / 2,
-            C_LINE,
-            lw,
-        )
-
+        # ── Pitch halves (home = left = blue, away = right = red) ────────────
         arcade.draw_lrbt_rectangle_filled(
-            PITCH_L - GOAL_DEPTH, PITCH_L, goal_lo, goal_hi, C_GOAL
-        )
-        arcade.draw_lrbt_rectangle_outline(
-            PITCH_L - GOAL_DEPTH, PITCH_L, goal_lo, goal_hi, C_LINE, lw
+            PITCH_L, PITCH_CX, PITCH_B, PITCH_T, C_PITCH_HOME
         )
         arcade.draw_lrbt_rectangle_filled(
-            PITCH_R, PITCH_R + GOAL_DEPTH, goal_lo, goal_hi, C_GOAL
+            PITCH_CX, PITCH_R, PITCH_B, PITCH_T, C_PITCH_AWAY
         )
-        arcade.draw_lrbt_rectangle_outline(
-            PITCH_R, PITCH_R + GOAL_DEPTH, goal_lo, goal_hi, C_LINE, lw
+
+        # ── Goal fills ────────────────────────────────────────────────────────
+        arcade.draw_lrbt_rectangle_filled(
+            PITCH_L - GOAL_DEPTH, PITCH_L, goal_lo, goal_hi, C_GOAL_HOME
+        )
+        arcade.draw_lrbt_rectangle_filled(
+            PITCH_R, PITCH_R + GOAL_DEPTH, goal_lo, goal_hi, C_GOAL_AWAY
+        )
+
+        # ── Boundary lines – home (left) side ─────────────────────────────────
+        arcade.draw_line(PITCH_L, PITCH_B, PITCH_L, PITCH_T, C_BORDER_HOME, bw)
+        arcade.draw_line(PITCH_L, PITCH_T, PITCH_CX, PITCH_T, C_BORDER_HOME, bw)
+        arcade.draw_line(PITCH_L, PITCH_B, PITCH_CX, PITCH_B, C_BORDER_HOME, bw)
+        # Home goal outline (left, top, bottom edges only – opening faces right)
+        arcade.draw_line(
+            PITCH_L - GOAL_DEPTH,
+            goal_lo,
+            PITCH_L - GOAL_DEPTH,
+            goal_hi,
+            C_BORDER_HOME,
+            bw,
+        )
+        arcade.draw_line(
+            PITCH_L - GOAL_DEPTH, goal_lo, PITCH_L, goal_lo, C_BORDER_HOME, bw
+        )
+        arcade.draw_line(
+            PITCH_L - GOAL_DEPTH, goal_hi, PITCH_L, goal_hi, C_BORDER_HOME, bw
+        )
+
+        # ── Boundary lines – away (right) side ────────────────────────────────
+        arcade.draw_line(PITCH_R, PITCH_B, PITCH_R, PITCH_T, C_BORDER_AWAY, bw)
+        arcade.draw_line(PITCH_CX, PITCH_T, PITCH_R, PITCH_T, C_BORDER_AWAY, bw)
+        arcade.draw_line(PITCH_CX, PITCH_B, PITCH_R, PITCH_B, C_BORDER_AWAY, bw)
+        # Away goal outline (right, top, bottom edges only – opening faces left)
+        arcade.draw_line(
+            PITCH_R + GOAL_DEPTH,
+            goal_lo,
+            PITCH_R + GOAL_DEPTH,
+            goal_hi,
+            C_BORDER_AWAY,
+            bw,
+        )
+        arcade.draw_line(
+            PITCH_R, goal_lo, PITCH_R + GOAL_DEPTH, goal_lo, C_BORDER_AWAY, bw
+        )
+        arcade.draw_line(
+            PITCH_R, goal_hi, PITCH_R + GOAL_DEPTH, goal_hi, C_BORDER_AWAY, bw
         )
 
     def _draw_hud(self) -> None:
@@ -360,7 +370,6 @@ class FootballGame(arcade.Window):
                      with each team's value displayed on its own side of the bar.
         """
         # ── Background ───────────────────────────────────────────────────────
-        arcade.draw_lrbt_rectangle_filled(0, SCREEN_W, 0, SCREEN_H, (15, 35, 15))
 
         # ── Header (full-width) ───────────────────────────────────────────────
         arcade.draw_text(
@@ -398,25 +407,38 @@ class FootballGame(arcade.Window):
         _mph = PITCH_T - PITCH_B  # main-pitch pixel height
         _goal_h = round(GOAL_H / _mph * STANDARD_PITCH_HEIGHT * _S)
         _goal_d = round(GOAL_DEPTH / _mpw * STANDARD_PITCH_WIDTH * _S)
-        _circle_r = round(70 / _mpw * STANDARD_PITCH_WIDTH * _S)
 
-        arcade.draw_lrbt_rectangle_filled(_PL, _PL + _PW, _PB, _PT, C_GRASS)
-        arcade.draw_lrbt_rectangle_outline(_PL, _PL + _PW, _PB, _PT, C_LINE, 2)
-        arcade.draw_line(_PCX, _PB, _PCX, _PT, C_LINE, 1)
-        arcade.draw_circle_outline(_PCX, _PCY, _circle_r, C_LINE, 1)
+        # Pitch halves
+        arcade.draw_lrbt_rectangle_filled(_PL, _PCX, _PB, _PT, C_PITCH_HOME)
+        arcade.draw_lrbt_rectangle_filled(_PCX, _PL + _PW, _PB, _PT, C_PITCH_AWAY)
 
         _g_lo = _PCY - _goal_h // 2
         _g_hi = _PCY + _goal_h // 2
-        # Away goal (left – global x = 0)
-        arcade.draw_lrbt_rectangle_filled(_PL - _goal_d, _PL, _g_lo, _g_hi, C_GOAL)
-        arcade.draw_lrbt_rectangle_outline(_PL - _goal_d, _PL, _g_lo, _g_hi, C_LINE, 1)
-        # Home goal (right – global x = 120)
+        # Home goal (left – global x = 0, home team defends)
+        arcade.draw_lrbt_rectangle_filled(_PL - _goal_d, _PL, _g_lo, _g_hi, C_GOAL_HOME)
+        arcade.draw_line(_PL - _goal_d, _g_lo, _PL - _goal_d, _g_hi, C_BORDER_HOME, 2)
+        arcade.draw_line(_PL - _goal_d, _g_lo, _PL, _g_lo, C_BORDER_HOME, 2)
+        arcade.draw_line(_PL - _goal_d, _g_hi, _PL, _g_hi, C_BORDER_HOME, 2)
+        # Away goal (right – global x = 120, away team defends)
         arcade.draw_lrbt_rectangle_filled(
-            _PL + _PW, _PL + _PW + _goal_d, _g_lo, _g_hi, C_GOAL
+            _PL + _PW, _PL + _PW + _goal_d, _g_lo, _g_hi, C_GOAL_AWAY
         )
-        arcade.draw_lrbt_rectangle_outline(
-            _PL + _PW, _PL + _PW + _goal_d, _g_lo, _g_hi, C_LINE, 1
+        arcade.draw_line(
+            _PL + _PW + _goal_d, _g_lo, _PL + _PW + _goal_d, _g_hi, C_BORDER_AWAY, 2
         )
+        arcade.draw_line(_PL + _PW, _g_lo, _PL + _PW + _goal_d, _g_lo, C_BORDER_AWAY, 2)
+        arcade.draw_line(_PL + _PW, _g_hi, _PL + _PW + _goal_d, _g_hi, C_BORDER_AWAY, 2)
+
+        # Boundary lines
+        arcade.draw_line(_PL, _PB, _PL, _PT, C_BORDER_HOME, 2)
+        arcade.draw_line(_PL, _PT, _PCX, _PT, C_BORDER_HOME, 2)
+        arcade.draw_line(_PL, _PB, _PCX, _PB, C_BORDER_HOME, 2)
+        arcade.draw_line(_PL + _PW, _PB, _PL + _PW, _PT, C_BORDER_AWAY, 2)
+        arcade.draw_line(_PCX, _PT, _PL + _PW, _PT, C_BORDER_AWAY, 2)
+        arcade.draw_line(_PCX, _PB, _PL + _PW, _PB, C_BORDER_AWAY, 2)
+
+        # Centre line
+        arcade.draw_line(_PCX, _PB, _PCX, _PT, C_LINE, 1)
 
         # Average-position dots: convert team coords → global → mini-pitch pixels.
         if self._avg_positions_df is not None:
@@ -638,7 +660,10 @@ class FootballGame(arcade.Window):
                     self._show_stats = True
             return
 
-        # Only process human input during active play (not during goal flash or countdown)
+        # Allow player switching even during pauses (goal flash / countdown)
+        self._handle_player_switch()
+
+        # Only pass full human input to the simulation during active play
         in_pause = self.sim.goal_flash > 0 or self.sim.countdown > 0
         human_input: HumanInput | None = None
         if not in_pause:
@@ -649,23 +674,30 @@ class FootballGame(arcade.Window):
 
     # ── Human input helpers ───────────────────────────────────────────────────
 
-    def _gather_human_input(self) -> HumanInput | None:
-        """Collect the current frame's human input.
+    def _handle_player_switch(self) -> None:
+        """Process right-stick player-switch input.
 
-        Returns ``None`` when no human player is configured.  Handles
-        gamepad strike-button edge detection and right-stick player switching
-        as side effects before packaging the result.
+        Called every frame, including during pauses, so the human can pick
+        which player they want to control before play resumes.
+        """
+        if self._human_team is None or self._controlled is None:
+            return
+        if self._joystick is None:
+            return
+        jrx, jry = self._get_right_stick()
+        switch_now = math.hypot(jrx, jry) > JOY_SWITCH_THRESHOLD
+        if switch_now and not self._joy_switch_prev:
+            self._switch_controlled_player(jrx, jry)
+        self._joy_switch_prev = switch_now
+
+    def _gather_human_input(self) -> HumanInput | None:
+        """Collect the current frame's human input (movement + strike).
+
+        Returns ``None`` when no human player is configured.
+        Player switching is handled separately in ``_handle_player_switch``.
         """
         if self._human_team is None:
             return None
-
-        # Gamepad: right-stick player switch
-        if self._controlled is not None and self._joystick is not None:
-            jrx, jry = self._get_right_stick()
-            switch_now = math.hypot(jrx, jry) > JOY_SWITCH_THRESHOLD
-            if switch_now and not self._joy_switch_prev:
-                self._switch_controlled_player(jrx, jry)
-            self._joy_switch_prev = switch_now
 
         if self._controlled_idx is None:
             return None
