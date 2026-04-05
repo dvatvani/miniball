@@ -185,6 +185,6 @@ def plot_state(
     score_a = state.match_state.team_current_score
     score_b = state.match_state.opposition_current_score
     ax.set_title(f"{time:.2f}s  ({score_a}–{score_b})")
-    ax.grid(False, alpha=0.3)
+    ax.grid(False)
     ax.axis("off")
     return plt.gca()

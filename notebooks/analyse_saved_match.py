@@ -43,7 +43,7 @@ def _(match_files, mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Inspect frames
+    # Analyse frames
     """)
     return
 
@@ -61,6 +61,7 @@ def _(match_result, mo):
     team_selector = mo.ui.radio(
         [match_result.home_team, match_result.away_team],
         value=match_result.home_team,
+        label="Select reference team (analysed game states and actions will be from the perspective of this team)",
     )
     team_selector
     return (team_selector,)
@@ -156,14 +157,27 @@ def _(
 
 
 @app.cell
-def _(state):
-    state.all_players
-    return
-
-
-@app.cell
-def _(actions):
-    actions
+def _(actions, mo, state):
+    mo.hstack(
+        [
+            mo.vstack(
+                [
+                    mo.md(r"""
+    ### Game state
+    """),
+                    state.__dict__,
+                ]
+            ),
+            mo.vstack(
+                [
+                    mo.md(r"""
+    ### Team actions
+    """),
+                    actions,
+                ]
+            ),
+        ]
+    )
     return
 
 
