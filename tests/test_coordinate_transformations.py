@@ -1,18 +1,20 @@
 """Tests for the three-coordinate-system conversion functions."""
 
-from miniball.config import PITCH_B, PITCH_L, PITCH_R, PITCH_T
-from miniball.coordinate_transformations import (
-    global_delta_to_screen,
+from miniball.coords import (
     global_delta_to_team,
-    global_to_screen,
     global_to_team,
+    team_delta_to_global,
+    team_to_global,
+)
+from miniball.ui.config import PITCH_B, PITCH_L, PITCH_R, PITCH_T
+from miniball.ui.coords import (
+    global_delta_to_screen,
+    global_to_screen,
     screen_delta_to_global,
     screen_delta_to_team,
     screen_to_global,
     screen_to_team,
-    team_delta_to_global,
     team_delta_to_screen,
-    team_to_global,
     team_to_screen,
 )
 

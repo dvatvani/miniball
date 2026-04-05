@@ -9,9 +9,10 @@ import math
 
 import pytest
 
-from miniball.config import C_TEAM_A, C_TEAM_B, PLAYER_SPEED
-from miniball.match_simulation import MatchSimulation, Player
+from miniball.config import PLAYER_SPEED
+from miniball.simulation.engine import MatchSimulation, Player
 from miniball.teams import Team
+from miniball.ui.config import C_TEAM_A, C_TEAM_B
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

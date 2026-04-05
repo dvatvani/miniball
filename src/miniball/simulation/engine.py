@@ -2,11 +2,11 @@
 
 All positions and velocities are stored in **global coordinates**
 (x ∈ [0, 120], y ∈ [0, 80]) — the team-agnostic normalised pitch
-frame.  The UI layer (``game.py``) is responsible for converting to
+frame.  The UI layer (``miniball.ui.game``) is responsible for converting to
 screen pixels for rendering and for translating raw input into global
 coordinates before passing it to the simulation.
 
-Can be driven by an arcade window (``FootballGame`` in ``game.py``) for the
+Can be driven by an arcade window (``FootballGame`` in ``ui/game.py``) for the
 interactive game, or run headlessly for batch analysis and AI league matches::
 
     sim = MatchSimulation(team_a_config, team_b_config)
@@ -23,32 +23,22 @@ fully AI-driven simulation.
 from __future__ import annotations
 
 import math
-import os
 import random
-import time
-import uuid
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
 
 import polars as pl
-from rich.console import Console
 
 from miniball.ai import (
     BallState,
     BaseAI,
     GameState,
     MatchState,
-    PlayerAction,
     PlayerState,
     TeamActions,
 )
 from miniball.config import (
     BALL_DRAG,
     BALL_RADIUS,
-    C_TEAM_A,
-    C_TEAM_B,
     GAME_DURATION,
     PLAYER_RADIUS,
     PLAYER_SPEED,
@@ -60,15 +50,15 @@ from miniball.config import (
     STRIKE_SPEED,
     TACKLE_COOLDOWN,
 )
-from miniball.coordinate_transformations import (
+from miniball.coords import (
     global_delta_to_team,
     global_to_team,
     team_delta_to_global,
     team_to_global,
 )
-from miniball.teams import Team, teams
-
-console = Console()
+from miniball.simulation.recording import FrameRecord
+from miniball.teams import Team
+from miniball.ui.config import C_TEAM_A, C_TEAM_B
 
 # ── Public data types ─────────────────────────────────────────────────────────
 
@@ -86,28 +76,6 @@ class HumanInput:
     player_number: int
     direction: tuple[float, float]
     strike: bool
-
-
-@dataclass
-class FrameRecord:
-    """Single-frame snapshot used for post-game analysis.
-
-    ``state`` is expressed in team A's coordinate system (team A always
-    attacks right), which serves as the global pitch reference frame.
-
-    ``actions_team_a`` and ``actions_team_b`` are each in their own team's
-    normalised frame (both teams attack right in their respective frames).
-    To convert team B's directions to the global frame, negate both components.
-
-    Human input overrides are already merged in: these are the *effective*
-    actions that were sent to the game engine, not the raw AI outputs.
-    """
-
-    game_time: float  # seconds elapsed since kick-off
-    state: GameState  # global reference frame (team A perspective)
-    actions_team_a: TeamActions  # normalised; team A attacks right
-    actions_team_b: TeamActions  # normalised; team B's own frame (also attacks right)
-    human_player: tuple[bool, int] | None  # (is_home, player_number) or None
 
 
 # ── Entities ──────────────────────────────────────────────────────────────────
@@ -411,9 +379,11 @@ class MatchSimulation:
 
     def export_history(self) -> None:
         """Write the match history to a parquet file on demand."""
+        from miniball.simulation.recording import write_parquet
+
         df = self.build_match_df()
         if df is not None:
-            self._write_parquet(df)
+            write_parquet(df, self.team_a_config.name, self.team_b_config.name)
 
     # ── AI interface ──────────────────────────────────────────────────────────
 
@@ -679,442 +649,12 @@ class MatchSimulation:
         if not self._history:
             return None
 
-        name_a = self.team_a_config.name
-        name_b = self.team_b_config.name
+        from miniball.simulation.recording import build_rows
 
-        rows: list[dict[str, object]] = []
-        for frame_number, record in enumerate(self._history):
-            gbx, gby = record.state.ball.location
-            gbvx, gbvy = record.state.ball.velocity
-            score_a = record.state.match_state.team_current_score
-            score_b = record.state.match_state.opposition_current_score
-            match_time = record.state.match_state.match_time_seconds
-            t = record.game_time
-
-            _null_action: PlayerAction = {"direction": (0.0, 0.0), "strike": False}
-            hp = record.human_player
-
-            for player in record.state.team:  # team A – own frame = global
-                num = player.number
-                gx, gy = player.location
-                pa_a = record.actions_team_a.get(num, _null_action)
-                dx, dy = pa_a["direction"]
-                rows.append(
-                    {
-                        "frame_number": frame_number,
-                        "game_time": t,
-                        "match_time_seconds": match_time,
-                        "team": name_a,
-                        "is_home": True,
-                        "player_number": num,
-                        "is_human_controlled": hp is not None
-                        and hp[0] is True
-                        and hp[1] == num,
-                        "pos_x": gx,
-                        "pos_y": gy,
-                        "has_ball": player.has_ball,
-                        "cooldown_timer": player.cooldown_timer,
-                        "action_dx": dx,
-                        "action_dy": dy,
-                        "strike": pa_a["strike"],
-                        "ball_x": gbx,
-                        "ball_y": gby,
-                        "ball_vx": gbvx,
-                        "ball_vy": gbvy,
-                        "team_score": score_a,
-                        "opposition_score": score_b,
-                    }
-                )
-
-            for player in record.state.opposition:  # team B
-                num = player.number
-                gx, gy = player.location
-                bx, by = global_to_team(gx, gy, is_home=False)
-                pa_b = record.actions_team_b.get(num, _null_action)
-                dx_b, dy_b = pa_b["direction"]
-                bbx, bby = global_to_team(gbx, gby, is_home=False)
-                bbvx, bbvy = global_delta_to_team(gbvx, gbvy, is_home=False)
-                rows.append(
-                    {
-                        "frame_number": frame_number,
-                        "game_time": t,
-                        "match_time_seconds": match_time,
-                        "team": name_b,
-                        "is_home": False,
-                        "player_number": num,
-                        "is_human_controlled": hp is not None
-                        and hp[0] is False
-                        and hp[1] == num,
-                        "pos_x": bx,
-                        "pos_y": by,
-                        "has_ball": player.has_ball,
-                        "cooldown_timer": player.cooldown_timer,
-                        "action_dx": dx_b,
-                        "action_dy": dy_b,
-                        "strike": pa_b["strike"],
-                        "ball_x": bbx,
-                        "ball_y": bby,
-                        "ball_vx": bbvx,
-                        "ball_vy": bbvy,
-                        "team_score": score_b,
-                        "opposition_score": score_a,
-                    }
-                )
-
-        return pl.DataFrame(rows)
-
-    def _write_parquet(self, df: pl.DataFrame, verbose: bool = True) -> None:
-        """Write a match history DataFrame to a timestamped parquet file.
-
-        Narrow dtypes are applied here (not in ``build_match_df``) so that
-        in-memory stats operations work with full-precision data while only
-        the persisted file uses compact types.
-        """
-        out_dir = Path("match_data")
-        out_dir.mkdir(exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        unique_id = str(uuid.uuid4())[:8]
-        match_result = _df_to_match_result(df)
-        path = (
-            out_dir
-            / f"match_{timestamp}_{match_result.home_team}_{match_result.away_team}_{match_result.home_goals}-{match_result.away_goals}_{unique_id}.parquet"
-        )
-        df.with_columns(
-            # Spatial / physics – float32
-            pl.col("pos_x").cast(pl.Float32),
-            pl.col("pos_y").cast(pl.Float32),
-            pl.col("action_dx").cast(pl.Float32),
-            pl.col("action_dy").cast(pl.Float32),
-            pl.col("ball_x").cast(pl.Float32),
-            pl.col("ball_y").cast(pl.Float32),
-            pl.col("ball_vx").cast(pl.Float32),
-            pl.col("ball_vy").cast(pl.Float32),
-            pl.col("cooldown_timer").cast(pl.Float32),
-            # Time – float32
-            pl.col("game_time").cast(pl.Float32),
-            pl.col("match_time_seconds").cast(pl.Float32),
-            # Integers – downcast to smallest fitting type
-            pl.col("frame_number").cast(pl.Int16),
-            pl.col("player_number").cast(pl.Int8),
-            pl.col("team_score").cast(pl.Int8),
-            pl.col("opposition_score").cast(pl.Int8),
-        ).write_parquet(path)
-        if verbose:
-            print(
-                f"Match data saved → {path}  ({len(self._history)} frames · {len(df)} rows)"
-            )
-
-
-# ── Frame reconstruction ──────────────────────────────────────────────────────
-
-
-@dataclass
-class FrameSnapshot:
-    """A fully reconstructed single frame from a match parquet file.
-
-    Both team perspectives are provided so that AI logic, rich player/ball
-    methods, and coordinate helpers all work directly without re-parsing
-    tabular data.
-
-    Attributes
-    ----------
-    frame_number:
-        Zero-based index matching the ``frame_number`` column in the parquet.
-    game_time:
-        Elapsed wall-clock game time in seconds (may exceed
-        ``match_time_seconds`` due to countdown/goal-flash pauses).
-    state_a, state_b:
-        ``GameState`` from team A's (home) and team B's (away) perspective
-        respectively.  Both use the standard team frame (attacking right).
-    actions_a, actions_b:
-        The effective ``TeamActions`` submitted by each team's AI for this
-        frame, in each team's own normalised coordinate frame.
-    """
-
-    frame_number: int
-    game_time: float
-    state_a: GameState
-    state_b: GameState
-    actions_a: TeamActions
-    actions_b: TeamActions
-
-
-def reconstruct_frames(df: pl.DataFrame) -> list[FrameSnapshot]:
-    """Reconstruct per-frame native objects from a match DataFrame.
-
-    The returned ``FrameSnapshot`` list mirrors what the simulation engine
-    produces internally each frame, making it straightforward to replay a
-    saved match, inspect AI decisions, or run analytical tools that operate
-    on ``GameState`` / ``PlayerState`` / ``BallState`` objects.
-
-    Parameters
-    ----------
-    df:
-        polars DataFrame produced by ``MatchSimulation.build_match_df``.
-
-    Returns
-    -------
-    list[FrameSnapshot]
-        One entry per frame, sorted by ``frame_number``.
-    """
-    from miniball.config import STANDARD_PITCH_HEIGHT as _H
-    from miniball.config import STANDARD_PITCH_WIDTH as _W
-
-    snapshots: list[FrameSnapshot] = []
-
-    for frame_df in df.sort("frame_number").partition_by(
-        "frame_number", maintain_order=True
-    ):
-        home_rows = frame_df.filter(pl.col("is_home"))
-        away_rows = frame_df.filter(~pl.col("is_home"))
-
-        first_home = home_rows.row(0, named=True)
-        first_away = away_rows.row(0, named=True)
-        frame_number: int = first_home["frame_number"]
-        game_time: float = first_home["game_time"]
-        match_time: float = first_home["match_time_seconds"]
-
-        # ── Build team A's GameState (home perspective = global frame) ────────
-        team_a_players = [
-            PlayerState(
-                number=row["player_number"],
-                is_teammate=True,
-                is_home=True,
-                has_ball=row["has_ball"],
-                cooldown_timer=row["cooldown_timer"],
-                location=(row["pos_x"], row["pos_y"]),
-            )
-            for row in home_rows.iter_rows(named=True)
-        ]
-        # Away players in team A's frame: rotate team-B coords back to global.
-        opp_for_a = [
-            PlayerState(
-                number=row["player_number"],
-                is_teammate=False,
-                is_home=False,
-                has_ball=row["has_ball"],
-                cooldown_timer=row["cooldown_timer"],
-                location=(_W - row["pos_x"], _H - row["pos_y"]),
-            )
-            for row in away_rows.iter_rows(named=True)
-        ]
-        state_a = GameState(
-            team=team_a_players,
-            opposition=opp_for_a,
-            ball=BallState(
-                location=(first_home["ball_x"], first_home["ball_y"]),
-                velocity=(first_home["ball_vx"], first_home["ball_vy"]),
-            ),
-            match_state=MatchState(
-                team_current_score=first_home["team_score"],
-                opposition_current_score=first_home["opposition_score"],
-                match_time_seconds=match_time,
-            ),
-            is_home=True,
-        )
-
-        # ── Build team B's GameState (away perspective) ───────────────────────
-        team_b_players = [
-            PlayerState(
-                number=row["player_number"],
-                is_teammate=True,
-                is_home=False,
-                has_ball=row["has_ball"],
-                cooldown_timer=row["cooldown_timer"],
-                location=(row["pos_x"], row["pos_y"]),
-            )
-            for row in away_rows.iter_rows(named=True)
-        ]
-        # Home players in team B's frame: rotate global coords to team-B frame.
-        opp_for_b = [
-            PlayerState(
-                number=row["player_number"],
-                is_teammate=False,
-                is_home=True,
-                has_ball=row["has_ball"],
-                cooldown_timer=row["cooldown_timer"],
-                location=(_W - row["pos_x"], _H - row["pos_y"]),
-            )
-            for row in home_rows.iter_rows(named=True)
-        ]
-        state_b = GameState(
-            team=team_b_players,
-            opposition=opp_for_b,
-            ball=BallState(
-                location=(first_away["ball_x"], first_away["ball_y"]),
-                velocity=(first_away["ball_vx"], first_away["ball_vy"]),
-            ),
-            match_state=MatchState(
-                team_current_score=first_away["team_score"],
-                opposition_current_score=first_away["opposition_score"],
-                match_time_seconds=match_time,
-            ),
-            is_home=False,
-        )
-
-        actions_a: TeamActions = {
-            row["player_number"]: {
-                "direction": (row["action_dx"], row["action_dy"]),
-                "strike": row["strike"],
-            }
-            for row in home_rows.iter_rows(named=True)
-        }
-        actions_b: TeamActions = {
-            row["player_number"]: {
-                "direction": (row["action_dx"], row["action_dy"]),
-                "strike": row["strike"],
-            }
-            for row in away_rows.iter_rows(named=True)
-        }
-
-        snapshots.append(
-            FrameSnapshot(
-                frame_number=frame_number,
-                game_time=game_time,
-                state_a=state_a,
-                state_b=state_b,
-                actions_a=actions_a,
-                actions_b=actions_b,
+        return pl.DataFrame(
+            build_rows(
+                self._history,
+                self.team_a_config.name,
+                self.team_b_config.name,
             )
         )
-
-    return snapshots
-
-
-def load_match(
-    path: str | Path,
-) -> tuple[MatchResult, pl.DataFrame, list[FrameSnapshot]]:
-    """Load a match from a parquet file and return the home and away teams and the list of frame snapshots."""
-    df = pl.read_parquet(path)
-    snapshots = reconstruct_frames(df)
-    match_result = _df_to_match_result(df)
-
-    return match_result, df, snapshots
-
-
-# ── Parallel fixture runner ───────────────────────────────────────────────────
-
-
-@dataclass
-class MatchResult:
-    """Outcome of a single simulated match."""
-
-    home_team: str
-    away_team: str
-    home_goals: int
-    away_goals: int
-
-
-def _df_to_match_result(df: pl.DataFrame) -> MatchResult:
-    """Convert a match DataFrame to a MatchResult."""
-    home_team_name = df.filter(pl.col("is_home")).row(0, named=True)["team"]
-    away_team_name = df.filter(~pl.col("is_home")).row(0, named=True)["team"]
-    last = df.filter(pl.col("is_home")).tail(1).row(0, named=True)
-    return MatchResult(
-        home_team_name,
-        away_team_name,
-        int(last["team_score"]),
-        int(last["opposition_score"]),
-    )
-
-
-def _simulate_match(
-    home_team: Team, away_team: Team, save_data: bool = False
-) -> MatchResult:
-    """Run one headless simulation and return a compact result.
-
-    ``Team`` objects (and their ``BaseAI`` instances) are picklable, so they
-    cross the process boundary without issue.
-    """
-    sim = MatchSimulation(home_team, away_team)
-    df = sim.simulate_match()
-    assert df is not None, "match DataFrame should be populated after game over"
-
-    if save_data:
-        sim._write_parquet(df, verbose=False)
-    match_result = _df_to_match_result(df)
-    return match_result
-
-
-def simulate_matches(
-    matches: list[tuple[Team, Team]],
-    *,
-    n_workers: int | None = None,
-    show_progress: bool = False,
-    save_data: bool = False,
-) -> list[MatchResult]:
-    """Run a list of ``(home_team, away_team)`` fixtures in parallel.
-
-    Parameters
-    ----------
-    fixtures:
-        Ordered pairs of ``Team`` objects.  Each pair is one match; include
-        both orderings to give each team a home fixture.
-    n_workers:
-        Number of worker processes.  Defaults to ``min(cpu_count, len(fixtures))``.
-    show_progress:
-        When ``True``, print a one-line result as each match completes.
-    save_data:
-        When ``True``, save the match data to parquet files.
-    Returns
-    -------
-    list[MatchResult]
-        Results in completion order (not fixture order).
-    """
-    workers = min(n_workers or (os.cpu_count() or 1), len(matches))
-    results: list[MatchResult] = []
-    start_time = time.perf_counter()
-
-    with ProcessPoolExecutor(max_workers=workers) as executor:
-        future_to_fixture = {
-            executor.submit(_simulate_match, home, away, save_data): (
-                home,
-                away,
-                save_data,
-            )
-            for home, away in matches
-        }
-        for i, future in enumerate(as_completed(future_to_fixture), 1):
-            home, away, save_data = future_to_fixture[future]
-            r = future.result()
-            results.append(r)
-            if show_progress:
-                score = f"{r.home_goals}–{r.away_goals}"
-                print(
-                    f"  [{i:2d}/{len(matches)}]  {home.name:<32s}  {score:^5s}  {away.name}"
-                )
-
-    console.print(
-        f"\n[dim]{len(matches)} matches in {time.perf_counter() - start_time:.1f} s"
-        f"  ({(time.perf_counter() - start_time) / len(matches) * 1000:.0f} ms/match)[/dim]"
-    )
-    if save_data:
-        console.print(
-            f"\n[dim]{len(matches)} matches saved to parquet files in {Path('match_data').absolute()}[/dim]"
-        )
-    return results
-
-
-if __name__ == "__main__":
-    import typer
-
-    from miniball.teams import teams, teams_list
-
-    def _cli(
-        home_team: str | None = typer.Option(None, help="Home team model name"),
-        away_team: str | None = typer.Option(None, help="Away team model name"),
-        save_data: bool = typer.Option(False, help="Save match data to parquet files"),
-        n_matches: int = typer.Option(1, help="Number of matches to simulate"),
-    ):
-        matches = []
-        for _ in range(n_matches):
-            h = teams[home_team] if home_team else random.choice(teams_list)
-            a = (
-                teams[away_team]
-                if away_team
-                else random.choice([t for t in teams_list if t is not h])
-            )
-            matches.append((h, a))
-        simulate_matches(matches, show_progress=True, save_data=save_data)
-
-    typer.run(_cli)

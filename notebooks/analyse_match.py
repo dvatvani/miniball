@@ -15,7 +15,7 @@ def _():
 def _():
     import matplotlib.pyplot as plt
     from miniball.config import STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH
-    from miniball.ai.utils import norm
+    from miniball.geometry import norm
 
     return STANDARD_PITCH_HEIGHT, STANDARD_PITCH_WIDTH, norm, plt
 
@@ -52,7 +52,7 @@ def _(mo):
 
 @app.cell
 def _(selected_match):
-    from miniball.match_simulation import load_match
+    from miniball.simulation import load_match
 
     match_result, df, frames = load_match(selected_match.value)
     return frames, match_result

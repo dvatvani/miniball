@@ -7,8 +7,8 @@ Library usage
 -------------
 ::
 
-    from miniball.league_simulation import simulate_league, build_league_table
-    from miniball.match_simulation import simulate_fixtures
+    from miniball.league import simulate_league, build_league_table
+    from miniball.simulation import simulate_matches
     from miniball.teams import Team, teams_list
     from miniball.ai import BaselineAI
 
@@ -24,14 +24,14 @@ Library usage
     table = simulate_league([custom, *teams_list])
 
     # Lower-level: run specific fixtures and aggregate yourself
-    results = simulate_fixtures([(teams_list[0], teams_list[1])])
+    results = simulate_matches([(teams_list[0], teams_list[1])])
     table = build_league_table(results)
 
 CLI usage
 ---------
 ::
 
-    uv run python -m miniball.league_simulation
+    uv run python -m miniball.league
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ from itertools import permutations
 
 import polars as pl
 
-from miniball.match_simulation import MatchResult, simulate_matches
+from miniball.simulation.runner import MatchResult, simulate_matches
 from miniball.teams import Team
 
 # ── Public API ────────────────────────────────────────────────────────────────

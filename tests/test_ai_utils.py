@@ -5,13 +5,8 @@ import math
 import pytest
 
 from miniball.ai.interface import BallPathPoint, BallState, PlayerState
-from miniball.ai.utils import (
-    dist,
-    norm,
-    opposition_goal_center,
-    player_closest_to_point,
-    relative_position,
-)
+from miniball.ai.utils import player_closest_to_point
+from miniball.geometry import OPPOSITION_GOAL_CENTER, dist, norm, relative_position
 from miniball.config import (
     BALL_DRAG,
     BALL_RADIUS,
@@ -128,7 +123,7 @@ def test_dist_accepts_tuple_inputs():
 
 
 def test_goal_center_is_right_edge_mid_height():
-    gx, gy = opposition_goal_center()
+    gx, gy = OPPOSITION_GOAL_CENTER
     assert gx == STANDARD_PITCH_WIDTH
     assert gy == pytest.approx(STANDARD_PITCH_HEIGHT / 2)
 

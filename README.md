@@ -76,7 +76,7 @@ Having a joystick / controller is recommended if you'd like to take control of a
 
 Headless AI vs AI match simulations can be run from the CLI
 ```bash
-uv run -m miniball.match_simulation
+uv run -m miniball.simulation.runner
 ```
 
 Running the above with a `--help` flag lists the CLI options available.
@@ -87,7 +87,7 @@ Matches can also be simulated easily from within Python:
 
 ```python
 from miniball.teams import teams_list
-from miniball.match_simulation import simulate_matches
+from miniball.simulation import simulate_matches
 results = simulate_matches([teams_list[0], teams_list[1]])
 ```
 
@@ -101,7 +101,7 @@ just run-league-simulation
 League simulations can also be easily run from within Python:
 
 ```python
-from miniball.league_simulation import simulate_league
+from miniball.league import simulate_league
 league_table_df = simulate_league()  # teams to include can be passed in. Uses all by default
 ```
 

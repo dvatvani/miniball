@@ -28,7 +28,20 @@ import polars as pl
 
 from miniball import match_stats
 from miniball.config import (
+    PLAYER_RADIUS,
+    STANDARD_PITCH_HEIGHT,
+    STANDARD_PITCH_WIDTH,
+    STRIKE_COOLDOWN,
+    TACKLE_COOLDOWN,
+)
+from miniball.coords import team_to_global
+from miniball.simulation.engine import HumanInput, MatchSimulation, Player
+from miniball.teams import Team
+from miniball.ui.config import (
     C_BALL,
+    COOLDOWN_ALPHA,
+    JOY_DEAD_ZONE,
+    JOY_SWITCH_THRESHOLD,
     C_BALL_OUTLINE,
     C_CONTROLLED,
     C_COOLDOWN_RING,
@@ -41,31 +54,21 @@ from miniball.config import (
     C_POSSESSION,
     C_TEAM_A,
     C_TEAM_B,
-    COOLDOWN_ALPHA,
     GOAL_DEPTH,
     GOAL_H,
-    JOY_DEAD_ZONE,
-    JOY_SWITCH_THRESHOLD,
     PITCH_B,
     PITCH_CX,
     PITCH_CY,
     PITCH_L,
     PITCH_R,
     PITCH_T,
-    PLAYER_RADIUS,
     SCREEN_BALL_RADIUS,
     SCREEN_H,
     SCREEN_PLAYER_RADIUS,
     SCREEN_W,
-    STANDARD_PITCH_HEIGHT,
-    STANDARD_PITCH_WIDTH,
-    STRIKE_COOLDOWN,
-    TACKLE_COOLDOWN,
     TITLE,
 )
-from miniball.coordinate_transformations import global_to_screen, team_to_global
-from miniball.match_simulation import HumanInput, MatchSimulation, Player
-from miniball.teams import Team
+from miniball.ui.coords import global_to_screen
 
 # ── Main window ───────────────────────────────────────────────────────────────
 
@@ -95,11 +98,7 @@ class FootballGame(arcade.Window):
 
         # Input state
         self._keys: set[int] = set()
-        self._joy_strike_prev = False
         self._joy_switch_prev = False
-        self._human_strike_requested = (
-            False  # set for one frame when human presses the strike button
-        )
 
         # Gamepad – use the first connected controller if one is present
         joysticks = arcade.get_joysticks()  # type: ignore[attr-defined]
@@ -420,8 +419,6 @@ class FootballGame(arcade.Window):
         )
 
         # Average-position dots: convert team coords → global → mini-pitch pixels.
-        # team_to_screen maps to the main game pitch; the mini pitch has its own
-        # origin (_PL, _PB) and scale (_S), so we apply that formula directly.
         if self._avg_positions_df is not None:
             for row in self._avg_positions_df.iter_rows(named=True):
                 gx, gy = team_to_global(
@@ -467,7 +464,6 @@ class FootballGame(arcade.Window):
             return
 
         # Vertically align the stats table with the pitch on the left.
-        # _PT / _PB are the pitch top / bottom pixel coordinates computed above.
         _hdr_y = _PT - 14  # team-name header centre
         _sep_y = _PT - 30  # divider line
         _top_row_y = _PT - 62  # centre of first stat row
@@ -552,23 +548,17 @@ class FootballGame(arcade.Window):
         away_val: float,
         fmt: str,
     ) -> None:
-        """Draw one statistic row: label | home value | stacked bar | away value.
-
-        The stacked bar is split left/right in proportion to the two teams' values.
-        A thin guide line marks the 50 % mid-point for quick visual reference.
-        """
+        """Draw one statistic row: label | home value | stacked bar | away value."""
         label_w: float = 150
         val_w: float = 80
         gap: float = 10
         bar_left = panel_x + label_w + val_w + gap
         bar_right = panel_r - val_w - gap
-        bar_w = bar_right - bar_left  # ~300 px
+        bar_w = bar_right - bar_left
         bar_h: float = 30
 
-        # Stat label
         arcade.draw_text(label, panel_x, row_y, C_HINT, 15, anchor_y="center")
 
-        # Numeric values (coloured, bold, flanking the bar)
         arcade.draw_text(
             fmt.format(home_val),
             bar_left - gap,
@@ -589,7 +579,6 @@ class FootballGame(arcade.Window):
             bold=True,
         )
 
-        # Stacked bar fill
         total = home_val + away_val
         home_frac = home_val / total if total > 0 else 0.5
         home_w = bar_w * home_frac
@@ -618,7 +607,6 @@ class FootballGame(arcade.Window):
                 bar_left + home_w, bar_right, bar_lo, bar_hi, away_fill
             )
 
-        # Border + 50 % guide
         arcade.draw_lrbt_rectangle_outline(
             bar_left, bar_right, bar_lo, bar_hi, C_HINT, 1
         )
@@ -629,8 +617,6 @@ class FootballGame(arcade.Window):
 
     def on_key_press(self, key: int, modifiers: int) -> None:
         self._keys.add(key)
-        if key == arcade.key.SPACE:
-            self._human_strike_requested = True
 
     def on_key_release(self, key: int, modifiers: int) -> None:
         self._keys.discard(key)
@@ -661,9 +647,6 @@ class FootballGame(arcade.Window):
         # Advance simulation
         self.sim.step(dt, human_input)
 
-        # Clear single-frame strike flag now that it has been consumed
-        self._human_strike_requested = False
-
     # ── Human input helpers ───────────────────────────────────────────────────
 
     def _gather_human_input(self) -> HumanInput | None:
@@ -676,14 +659,8 @@ class FootballGame(arcade.Window):
         if self._human_team is None:
             return None
 
-        # Gamepad: strike button (edge-triggered) + right-stick player switch
+        # Gamepad: right-stick player switch
         if self._controlled is not None and self._joystick is not None:
-            if self._joystick.buttons:
-                strike_now = bool(self._joystick.buttons[0])
-                if strike_now and not self._joy_strike_prev:
-                    self._human_strike_requested = True
-                self._joy_strike_prev = strike_now
-
             jrx, jry = self._get_right_stick()
             switch_now = math.hypot(jrx, jry) > JOY_SWITCH_THRESHOLD
             if switch_now and not self._joy_switch_prev:
@@ -699,24 +676,21 @@ class FootballGame(arcade.Window):
         dx, dy = self._get_move_input()
         is_home = self._human_team is self.sim.team_a
 
+        strike = arcade.key.SPACE in self._keys
+        if self._joystick is not None and self._joystick.buttons:
+            strike = strike or bool(self._joystick.buttons[0])
+
         return HumanInput(
             is_home=is_home,
             player_number=controlled.number,
             direction=(dx, dy),
-            strike=self._human_strike_requested,
+            strike=strike,
         )
 
     def _get_move_input(self) -> tuple[float, float]:
-        """Return a (dx, dy) vector from keyboard or gamepad left stick.
-
-        Keyboard produces unit-axis values; the analogue stick returns raw
-        floats in [-1, 1] so diagonal movement naturally scales to the true
-        stick magnitude (full 360° at any speed up to PLAYER_SPEED).
-        Gamepad input takes priority when the stick is outside the dead zone.
-        """
+        """Return a (dx, dy) vector from keyboard or gamepad left stick."""
         dx = dy = 0.0
 
-        # Keyboard
         if arcade.key.LEFT in self._keys:
             dx -= 1.0
         if arcade.key.RIGHT in self._keys:
@@ -726,10 +700,8 @@ class FootballGame(arcade.Window):
         if arcade.key.UP in self._keys:
             dy += 1.0
 
-        # Gamepad left analogue stick (overrides keyboard when active)
         if self._joystick is not None:
             jx = self._joystick.x
-            # Pyglet's Y axis is inverted relative to arcade's screen coordinates
             jy = -self._joystick.y
             if math.hypot(jx, jy) > JOY_DEAD_ZONE:
                 dx, dy = jx, jy
@@ -737,21 +709,7 @@ class FootballGame(arcade.Window):
         return dx, dy
 
     def _get_right_stick(self) -> tuple[float, float]:
-        """Return the (dx, dy) vector of the right analogue stick.
-
-        Pyglet pre-initialises ALL axis attributes to 0 on every Joystick
-        object regardless of whether the hardware has them, so ``hasattr``
-        cannot distinguish real axes from phantom ones.  Instead we rely on
-        ``_joy_axis_state``, which is populated only when the OS actually
-        fires an ``on_joyaxis_motion`` event, making it a reliable proxy for
-        "this axis physically exists on this device".
-
-        Candidate pairs tried in order (first whose keys appear in the state
-        dict wins):
-          • ('z', 'rz')  – PS / generic gamepads on macOS
-          • ('rx', 'ry') – Xbox / standard HID
-        Applies the same Pyglet Y-axis inversion as the left stick.
-        """
+        """Return the (dx, dy) vector of the right analogue stick."""
         if self._joystick is None:
             return 0.0, 0.0
         state = self._joy_axis_state
@@ -761,13 +719,7 @@ class FootballGame(arcade.Window):
         return 0.0, 0.0
 
     def _switch_controlled_player(self, dx: float, dy: float) -> None:
-        """Switch human control to the teammate whose position is most in the direction (dx, dy).
-
-        The teammate with the smallest angular difference between the flick
-        direction and the vector from the current controlled player to that
-        teammate is selected.  Positions are converted to screen space so that
-        the angular comparison matches the joystick's screen-oriented axes.
-        """
+        """Switch human control to the teammate most in the direction (dx, dy)."""
         if self._human_team is None or self._controlled_idx is None:
             return
         current = self._controlled

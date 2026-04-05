@@ -4,7 +4,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from miniball.ai.interface import BaseAI, GameState, PlayerState, TeamActions
-from miniball.ai.utils import dist, opposition_goal_center, player_closest_to_point
+from miniball.ai.utils import player_closest_to_point
 from miniball.ai.utils.geometry import players_bounded_voronoi, players_in_polygon
 from miniball.config import (
     BALL_RADIUS,
@@ -12,6 +12,7 @@ from miniball.config import (
     STANDARD_PITCH_HEIGHT,
     STANDARD_PITCH_WIDTH,
 )
+from miniball.geometry import OPPOSITION_GOAL_CENTER, dist
 
 
 class BaselineAI(BaseAI):
@@ -92,7 +93,7 @@ class BaselineAI(BaseAI):
 
         # Shoot if close enough to the goal
         # Check which of near and far post is clearer and shoot in that direction.
-        if state.ball_carrier.dist_to(opposition_goal_center()) <= self.STRIKE_RANGE:
+        if state.ball_carrier.dist_to(OPPOSITION_GOAL_CENTER) <= self.STRIKE_RANGE:
             shot_placement_location = self._determine_shot_placement(state)
 
             directions[state.ball_carrier.number] = state.ball_carrier.direction_to(

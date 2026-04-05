@@ -1,5 +1,5 @@
 from miniball.ai.interface import BaseAI, GameState, TeamActions
-from miniball.ai.utils import opposition_goal_center
+from miniball.geometry import OPPOSITION_GOAL_CENTER
 
 
 class BallChasersAI(BaseAI):
@@ -30,9 +30,9 @@ class BallChasersAI(BaseAI):
         for p in state.team:
             if p.has_ball:
                 # ── Dribble toward goal; strike when close enough ───────────
-                directions[p.number] = p.direction_to(opposition_goal_center())
+                directions[p.number] = p.direction_to(OPPOSITION_GOAL_CENTER)
                 ball_carrier_number = p.number
-                strike = p.dist_to(opposition_goal_center()) < self.STRIKE_RANGE
+                strike = p.dist_to(OPPOSITION_GOAL_CENTER) < self.STRIKE_RANGE
 
             elif state.team_has_ball:
                 # ── Drift back to formation position to open up space ────────
