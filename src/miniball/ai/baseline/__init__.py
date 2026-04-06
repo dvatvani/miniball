@@ -94,30 +94,34 @@ class BaselineAI(BaseAI):
         gk = state.players(teammates=True, opposition=False, include_outfield=False)[0]
         directions[gk.number] = gk.direction_to(self.formation[gk.number])
 
-        # Shoot if close enough to the goal
-        # Check which of near and far post is clearer and shoot in that direction.
-        if state.ball_carrier.dist_to(OPPOSITION_GOAL_CENTER) <= self.STRIKE_RANGE:
-            shot_placement_location = self._determine_shot_placement(state)
+        # Override the actions above for the ball carrier...
 
+        # Dribble toward the opposition goal
+        directions[state.ball_carrier.number] = state.ball_carrier.direction_to(
+            OPPOSITION_GOAL_CENTER
+        )
+        # If there is an open forward teammate, pass to them
+        forward_target = self._find_pass_target(state, forward_only=True)
+        if forward_target is not None:
             directions[state.ball_carrier.number] = state.ball_carrier.direction_to(
-                shot_placement_location
+                forward_target.location
             )
-
             strike = True
 
-        # Otherwise, look for a clear passing lane, and clear the ball if under pressure
-        else:
+        # When under pressure, try to pass to pass the ball to an open teammate.
+        # At this point, forward passes are preferred, but backwards passes are also allowed.
+        # If no forward passes are available, the ball is cleared.
+        nearest_opp = state.ball_carrier.closest_player(state.opposition)
+        under_pressure = state.ball_carrier.dist_to(nearest_opp) <= self.PRESSURE_RANGE
+        if under_pressure:
             forward_target = self._find_pass_target(state)
-            nearest_opp = state.ball_carrier.closest_player(state.opposition)
-            under_pressure = (
-                state.ball_carrier.dist_to(nearest_opp) <= self.PRESSURE_RANGE
-            )
             if forward_target is not None:
                 directions[state.ball_carrier.number] = state.ball_carrier.direction_to(
-                    forward_target
+                    forward_target.location
                 )
                 strike = True
-            elif under_pressure:
+            else:
+                # If there is no clear passing lane, clear the ball.
                 nearest_opp_dy = (
                     nearest_opp.location[1] - state.ball_carrier.location[1]
                 )
@@ -126,6 +130,16 @@ class BaselineAI(BaseAI):
                     -10 if nearest_opp_dy > 0 else 10,
                 )
                 strike = True
+
+        # If close enough to the opposition goal, try to shoot
+        if state.ball_carrier.dist_to(OPPOSITION_GOAL_CENTER) <= self.STRIKE_RANGE:
+            shot_placement_location = self._determine_shot_placement(state)
+
+            directions[state.ball_carrier.number] = state.ball_carrier.direction_to(
+                shot_placement_location
+            )
+
+            strike = True
 
         return directions, strike
 
@@ -230,6 +244,7 @@ class BaselineAI(BaseAI):
     def _find_pass_target(
         self,
         state: GameState,
+        forward_only: bool = False,
     ) -> PlayerState | None:
         """Return the furthest-forward teammate reachable via a clear passing lane.
 
@@ -245,6 +260,10 @@ class BaselineAI(BaseAI):
             player_on_ball=False,
             players_on_cooldown=False,
         )
+        if forward_only:
+            candidates = [
+                p for p in candidates if p.location[0] > state.ball_carrier.location[0]
+            ]
         if not candidates:
             return None
 

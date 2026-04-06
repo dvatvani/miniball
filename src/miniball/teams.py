@@ -105,10 +105,6 @@ teams_list = [
             FormationSlot(number=5, x=15, y=25),
         ],
     ),
-    Team(name="Stationary2", ai=StationaryAI),
-    Team(name="Stationary3", ai=StationaryAI),
-    Team(name="Stationary4", ai=StationaryAI),
-    Team(name="Stationary5", ai=StationaryAI),
 ]
 
 teams = {team.name: team for team in teams_list}
