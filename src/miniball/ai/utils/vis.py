@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+from miniball.ai.interface import GameState
 from miniball.config import (
     STANDARD_GOAL_DEPTH,
     STANDARD_GOAL_HEIGHT,
@@ -58,14 +59,7 @@ OPPOSITION_GOAL_COORDS = np.array(
 )
 
 
-def plot_state(
-    state,
-    actions=None,
-    show_projected_ball_path=True,
-    show_action_directions=False,
-    normalise_action_directions=False,
-    show_projected_ball_interception_points=False,
-):
+def plot_pitch() -> plt.Axes:
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.set_xlim(TEAM_GOAL_COORDS[:, 0].min(), OPPOSITION_GOAL_COORDS[:, 0].max())
     ax.set_ylim(
@@ -101,6 +95,20 @@ def plot_state(
         alpha=0.3,
         zorder=1,
     )
+    ax.grid(False)
+    ax.axis("off")
+    return ax
+
+
+def plot_state(
+    state: GameState,
+    actions=None,
+    show_projected_ball_path=True,
+    show_action_directions=False,
+    normalise_action_directions=False,
+    show_projected_ball_interception_points=False,
+):
+    ax = plot_pitch()
     null_direction = (0.0, 0.0)
     for player in state.all_players:
         ax.scatter(
@@ -185,6 +193,4 @@ def plot_state(
     score_a = state.match_state.team_current_score
     score_b = state.match_state.opposition_current_score
     ax.set_title(f"{time:.2f}s  ({score_a}–{score_b})")
-    ax.grid(False)
-    ax.axis("off")
     return plt.gca()
