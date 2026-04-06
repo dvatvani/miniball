@@ -1,6 +1,6 @@
 """Screen-space rendering constants: window size, pixel geometry, and colours.
 
-These are only consumed by the game UI layer (``miniball.ui.game``) and the
+These are only consumed by the game UI layer (``miniball.ui``) and the
 screen-space coordinate transforms (``miniball.ui.coords``).  Simulation,
 AI, and analytics code should import from ``miniball.config`` instead.
 """

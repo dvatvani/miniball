@@ -2,7 +2,7 @@
 
 All positions and velocities are stored in **global coordinates**
 (x ∈ [0, 120], y ∈ [0, 80]) — the team-agnostic normalised pitch
-frame.  The UI layer (``miniball.ui.game``) is responsible for converting to
+frame.  The UI layer (``miniball.ui``) is responsible for converting to
 screen pixels for rendering and for translating raw input into global
 coordinates before passing it to the simulation.
 

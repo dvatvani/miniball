@@ -1,4 +1,4 @@
-from miniball.ui.game import main
+from miniball.ui.window import main
 
 if __name__ == "__main__":
     main()
