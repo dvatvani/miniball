@@ -67,8 +67,8 @@ def avg_positions(df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def strike_stats(df: pl.DataFrame) -> pl.DataFrame:
-    """Classify every strike as a shot or a pass and aggregate per-team stats.
+def annotate_strikes(df: pl.DataFrame) -> pl.DataFrame:
+    """Return one row per strike event, enriched with classification metadata.
 
     Parameters
     ----------
@@ -78,11 +78,16 @@ def strike_stats(df: pl.DataFrame) -> pl.DataFrame:
     Returns
     -------
     pl.DataFrame
-        One row per team with columns:
+        One row per strike, sorted by ``frame_number``, with columns:
 
-        team, is_home,
-        passes, passes_completed, pass_accuracy (0–100 %),
-        shots, shots_on_target, shot_accuracy (0–100 %)
+        frame_number, team, is_home,
+        ball_x, ball_y, action_dx, action_dy,
+        y_at_goal          – projected y at the goal line (null if not heading forward),
+        is_shot            – True when struck from attacking half toward the goal mouth,
+        is_shot_on_target  – True when the trajectory crosses within actual goal bounds,
+        is_goal            – True when the shot is followed by a score increase before the next strike,
+        is_pass            – True for all non-shot strikes,
+        is_pass_successful – True when the next player to gain possession is a teammate
 
     Notes
     -----
@@ -99,14 +104,19 @@ def strike_stats(df: pl.DataFrame) -> pl.DataFrame:
     pitch_mid = STANDARD_PITCH_WIDTH / 2  # 60.0
 
     _empty_schema: dict[str, type[pl.DataType]] = {
+        "frame_number": pl.Int64,
         "team": pl.String,
         "is_home": pl.Boolean,
-        "passes": pl.Int32,
-        "passes_completed": pl.Int32,
-        "pass_accuracy": pl.Float64,
-        "shots": pl.Int32,
-        "shots_on_target": pl.Int32,
-        "shot_accuracy": pl.Float64,
+        "ball_x": pl.Float64,
+        "ball_y": pl.Float64,
+        "action_dx": pl.Float64,
+        "action_dy": pl.Float64,
+        "y_at_goal": pl.Float64,
+        "is_shot": pl.Boolean,
+        "is_shot_on_target": pl.Boolean,
+        "is_goal": pl.Boolean,
+        "is_pass": pl.Boolean,
+        "is_pass_successful": pl.Boolean,
     }
 
     # ── Extract one row per strike event ──────────────────────────────────────
@@ -186,9 +196,91 @@ def strike_stats(df: pl.DataFrame) -> pl.DataFrame:
                 & (pl.col("next_team") == pl.col("team"))
             ).alias("is_pass_successful"),
         )
+        .drop(["next_frame", "next_team"])
     )
 
-    # ── Aggregate ─────────────────────────────────────────────────────────────
+    # ── Goal detection ─────────────────────────────────────────────────────────
+    # Find frames where each team's score increased (a goal was conceded).
+    # Sorted by (team, goal_frame) so join_asof can verify within-group order.
+    goal_events = (
+        df.select(["frame_number", "team", "team_score"])
+        .unique(subset=["frame_number", "team"])
+        .sort(["team", "frame_number"])
+        .with_columns(pl.col("team_score").shift(1).over("team").alias("prev_score"))
+        .filter(pl.col("team_score") > pl.col("prev_score").fill_null(0))
+        .select(["frame_number", "team"])
+        .rename({"frame_number": "goal_frame"})
+        .sort(["team", "goal_frame"])
+    )
+
+    # For each shot at frame F by team T, find the next goal by T after F
+    # (join_asof by="team" searches within the same team's goal events).
+    # next_event_frame caps the window: the goal must precede the next strike.
+    #
+    # next_event_frame is computed first (requires global frame order via
+    # shift(-1)), then events are re-sorted by (team, goal_lookup) so that
+    # Polars can verify within-group sort order for the by="team" join_asof.
+    events = events.with_columns(
+        pl.col("frame_number").shift(-1).alias("next_event_frame"),
+        (pl.col("frame_number") + 1).alias("goal_lookup"),
+    )
+    return (
+        events.sort(["team", "goal_lookup"])
+        .join_asof(
+            goal_events,
+            left_on="goal_lookup",
+            right_on="goal_frame",
+            by="team",
+            strategy="forward",
+        )
+        .with_columns(
+            (
+                pl.col("is_shot")
+                & pl.col("goal_frame").is_not_null()
+                & (
+                    pl.col("next_event_frame").is_null()
+                    | (pl.col("goal_frame") <= pl.col("next_event_frame"))
+                )
+            ).alias("is_goal"),
+        )
+        .drop(["goal_lookup", "goal_frame", "next_event_frame"])
+        .sort("frame_number")
+    )
+
+
+def strike_stats(df: pl.DataFrame) -> pl.DataFrame:
+    """Classify every strike as a shot or a pass and aggregate per-team stats.
+
+    Parameters
+    ----------
+    df:
+        Frame-level DataFrame produced by ``MatchSimulation.build_match_df``.
+
+    Returns
+    -------
+    pl.DataFrame
+        One row per team with columns:
+
+        team, is_home,
+        passes, passes_completed, pass_accuracy (0–100 %),
+        shots, shots_on_target, shot_accuracy (0–100 %)
+    """
+    _empty_schema: dict[str, type[pl.DataType]] = {
+        "team": pl.String,
+        "is_home": pl.Boolean,
+        "passes": pl.Int32,
+        "passes_completed": pl.Int32,
+        "pass_accuracy": pl.Float64,
+        "shots": pl.Int32,
+        "shots_on_target": pl.Int32,
+        "shot_accuracy": pl.Float64,
+    }
+
+    events = annotate_strikes(df)
+
+    if events.is_empty():
+        return pl.DataFrame(schema=_empty_schema)
+
     return (
         events.group_by(["team", "is_home"])
         .agg(
