@@ -12,6 +12,9 @@ play:
 run-league-simulation:
   uv run python -m miniball.league
 
+clear-match-data:
+  rm match_data/*
+
 # Synchronize dependencies from lockfile
 sync:
     uv sync
