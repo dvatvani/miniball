@@ -4,13 +4,14 @@ from collections.abc import Sequence
 import numpy as np
 
 from miniball.ai.interface import BaseAI, GameState, PlayerState, TeamActions
-from miniball.ai.utils import player_closest_to_point
 from miniball.ai.utils.geometry import players_bounded_voronoi, players_in_polygon
 from miniball.config import (
     BALL_RADIUS,
+    PLAYER_SPEED,
     STANDARD_GOAL_HEIGHT,
     STANDARD_PITCH_HEIGHT,
     STANDARD_PITCH_WIDTH,
+    STRIKE_SPEED,
 )
 from miniball.geometry import OPPOSITION_GOAL_CENTER, dist
 
@@ -47,7 +48,9 @@ class BaselineAI(BaseAI):
     STRIKE_RANGE: float = 40.0
     PRESSURE_RANGE: float = 10.0
     COVERAGE_FRACTION: float = 0.9
-    PASSING_LANE_ANGLE: float = np.radians(30)  # angle for pass lane check
+    PASSING_LANE_ANGLE: float = abs(
+        math.atan2(PLAYER_SPEED * 1.2, STRIKE_SPEED / 2)
+    )  # angle for pass lane check
     _VORONOI_GRID_STEP: float = 5.0  # pitch units between grid sample points
 
     # ── Public interface ──────────────────────────────────────────────────────
@@ -88,7 +91,7 @@ class BaselineAI(BaseAI):
             directions[p.number] = p.direction_to(centroid)
 
         # Move the GK towards the starting GK position
-        gk = state.players(teammates=True, include_goalkeepers=True)[0]
+        gk = state.players(teammates=True, opposition=False, include_outfield=False)[0]
         directions[gk.number] = gk.direction_to(self.formation[gk.number])
 
         # Shoot if close enough to the goal
@@ -105,11 +108,9 @@ class BaselineAI(BaseAI):
         # Otherwise, look for a clear passing lane, and clear the ball if under pressure
         else:
             forward_target = self._find_pass_target(state)
+            nearest_opp = state.ball_carrier.closest_player(state.opposition)
             under_pressure = (
-                state.ball_carrier.dist_to(
-                    state.ball_carrier.closest_player(state.opposition).location
-                )
-                <= self.PRESSURE_RANGE
+                state.ball_carrier.dist_to(nearest_opp) <= self.PRESSURE_RANGE
             )
             if forward_target is not None:
                 directions[state.ball_carrier.number] = state.ball_carrier.direction_to(
@@ -117,9 +118,6 @@ class BaselineAI(BaseAI):
                 )
                 strike = True
             elif under_pressure:
-                nearest_opp = player_closest_to_point(
-                    state.opposition, state.ball_carrier.location
-                )
                 nearest_opp_dy = (
                     nearest_opp.location[1] - state.ball_carrier.location[1]
                 )
@@ -139,9 +137,7 @@ class BaselineAI(BaseAI):
     ) -> dict[int, tuple[float, float]]:
         directions: dict[int, tuple[float, float]] = {}
 
-        closest = state.ball.fastest_interceptor(
-            state.players(teammates=True, opposition=False)
-        )
+        closest = state.ball.fastest_interceptor(state.team)
         for p in state.team:
             # Move the closest player toward the ball
             if p == closest:
@@ -165,13 +161,15 @@ class BaselineAI(BaseAI):
                 owned = self._zonal_opponents(p.number, state.opposition)
                 if owned and p.number != 1:  # Prevent GK from marking anyone
                     target = min(owned, key=lambda o: o.location[0])
-                    tx = state.ball.location[0] + self.COVERAGE_FRACTION * (
-                        target.location[0] - state.ball.location[0]
+                    cover_point = (
+                        state.ball.location[0]
+                        + self.COVERAGE_FRACTION
+                        * (target.location[0] - state.ball.location[0]),
+                        state.ball.location[1]
+                        + self.COVERAGE_FRACTION
+                        * (target.location[1] - state.ball.location[1]),
                     )
-                    ty = state.ball.location[1] + self.COVERAGE_FRACTION * (
-                        target.location[1] - state.ball.location[1]
-                    )
-                    directions[p.number] = (tx - p.location[0], ty - p.location[1])
+                    directions[p.number] = p.direction_to(cover_point)
                 else:
                     fp = self.formation.get(p.number, p.location)
                     directions[p.number] = p.direction_to(fp)

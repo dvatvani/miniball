@@ -347,6 +347,33 @@ class PlayerState:
         )
         return min(candidates, key=lambda p: self.dist_to(p))
 
+    def angle_to(
+        self,
+        target: PlayerState | Sequence[float],
+        subject: PlayerState | Sequence[float],
+    ) -> float:
+        """Signed angle (radians) at this player between the directions to ``target`` and ``subject``.
+
+        Measures the angle target–player–subject, i.e. the angle at this
+        player's position between the ray pointing toward ``target`` and the
+        ray pointing toward ``subject``.  Positive values are
+        counter-clockwise; the result lies in ``(-π, π]``.
+
+        Both arguments may be a ``PlayerState`` or any ``(x, y)`` sequence
+        (e.g. the return value of ``goal_center()``).
+
+        Example — check whether ``subject`` is within 30° of the direction to
+        ``target``::
+
+            abs(player.angle_to(target, subject)) < math.radians(30)
+        """
+        tx, ty = target.location if isinstance(target, PlayerState) else target
+        sx, sy = subject.location if isinstance(subject, PlayerState) else subject
+        px, py = self.location
+        atx, aty = tx - px, ty - py
+        asx, asy = sx - px, sy - py
+        return math.atan2(atx * asy - aty * asx, atx * asx + aty * asy)
+
     def __repr__(self) -> str:
         side = "home" if self.is_home else "away"
         role = "team" if self.is_teammate else "opp"
@@ -696,6 +723,14 @@ class GameState:
             return self.ball.velocity
         vx, vy = self.ball.velocity
         return (-vx, -vy)
+
+    def team_player(self, number: int) -> PlayerState | None:
+        """Return the teammate with the given shirt number, or ``None``."""
+        return next((p for p in self.team if p.number == number), None)
+
+    def opposition_player(self, number: int) -> PlayerState | None:
+        """Return the opposition player with the given shirt number, or ``None``."""
+        return next((p for p in self.opposition if p.number == number), None)
 
     def players(
         self,
