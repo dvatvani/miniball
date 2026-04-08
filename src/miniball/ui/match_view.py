@@ -167,14 +167,11 @@ class MatchView(arcade.View):
         if abs(dy) > 1e-9:
             t_candidates.append(((STANDARD_PITCH_HEIGHT if dy > 0 else 0) - gy) / dy)
 
-        if not t_candidates:
+        valid_t_candidates = [tc for tc in t_candidates if tc > 1e-9]
+        if not valid_t_candidates:
+            # either no candidates, or they are too close to 0 (no valid intersection)
             return
-
-        forward = [tc for tc in t_candidates if tc > 1e-9]
-        if not forward:
-            # all t candidates too close to 0: no valid intersection
-            return
-        t = min(forward)
+        t = min(valid_t_candidates)
         end_gx = gx + dx * t
         end_gy = gy + dy * t
 
