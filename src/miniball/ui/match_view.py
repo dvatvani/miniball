@@ -170,7 +170,11 @@ class MatchView(arcade.View):
         if not t_candidates:
             return
 
-        t = min(tc for tc in t_candidates if tc > 0)
+        forward = [tc for tc in t_candidates if tc > 1e-9]
+        if not forward:
+            # all t candidates too close to 0: no valid intersection
+            return
+        t = min(forward)
         end_gx = gx + dx * t
         end_gy = gy + dy * t
 
