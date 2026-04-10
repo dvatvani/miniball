@@ -46,6 +46,7 @@ from miniball.config import (
     STANDARD_GOAL_HEIGHT,
     STANDARD_PITCH_HEIGHT,
     STANDARD_PITCH_WIDTH,
+    STRIKE_ANGULAR_ERROR_DEGREES,
     STRIKE_COOLDOWN,
     STRIKE_SPEED,
     TACKLE_COOLDOWN,
@@ -509,15 +510,17 @@ class MatchSimulation:
     # ── Physics helpers ───────────────────────────────────────────────────────
 
     def _handle_strike(self, player: Player) -> None:
-        """Launch the ball in ``player``'s facing direction."""
+        """Launch the ball in ``player``'s facing direction with angular error."""
         if self.ball.possessed_by is not player:
             return
         self.ball.possessed_by = None
+        error_rad = math.radians(STRIKE_ANGULAR_ERROR_DEGREES)
+        angle = player.facing + random.uniform(-error_rad, error_rad)
         separation = PLAYER_RADIUS + BALL_RADIUS + 0.24
-        self.ball.x = player.x + math.cos(player.facing) * separation
-        self.ball.y = player.y + math.sin(player.facing) * separation
-        self.ball.vx = math.cos(player.facing) * STRIKE_SPEED
-        self.ball.vy = math.sin(player.facing) * STRIKE_SPEED
+        self.ball.x = player.x + math.cos(angle) * separation
+        self.ball.y = player.y + math.sin(angle) * separation
+        self.ball.vx = math.cos(angle) * STRIKE_SPEED
+        self.ball.vy = math.sin(angle) * STRIKE_SPEED
         player.cooldown_timer = max(player.cooldown_timer, STRIKE_COOLDOWN)
 
     def _pickup_loose_ball(self) -> None:

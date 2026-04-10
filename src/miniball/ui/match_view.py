@@ -12,6 +12,7 @@ from miniball.config import (
     PLAYER_RADIUS,
     STANDARD_PITCH_HEIGHT,
     STANDARD_PITCH_WIDTH,
+    STRIKE_ANGULAR_ERROR_DEGREES,
     STRIKE_COOLDOWN,
     TACKLE_COOLDOWN,
 )
@@ -93,7 +94,7 @@ class MatchView(arcade.View):
         self.clear()
         draw_pitch(PITCH_L, PITCH_B, _PITCH_PX_W, _PITCH_PX_H, line_width=3)
         if self._controlled is not None:
-            self._draw_aim_line(self._controlled)
+            self._draw_aim_arc(self._controlled)
         self._draw_ball()
         for p in self.sim.all_players:
             self._draw_player(p, highlight=(p is self._controlled))
@@ -154,29 +155,46 @@ class MatchView(arcade.View):
             bold=True,
         )
 
-    def _draw_aim_line(self, p: Player) -> None:
-        dx = math.cos(p.facing)
-        dy = math.sin(p.facing)
+    def _draw_aim_arc(self, p: Player) -> None:
+        error_rad = math.radians(STRIKE_ANGULAR_ERROR_DEGREES)
+        gx = p.x + math.cos(p.facing) * PLAYER_RADIUS
+        gy = p.y + math.sin(p.facing) * PLAYER_RADIUS
 
-        gx = p.x + dx * PLAYER_RADIUS
-        gy = p.y + dy * PLAYER_RADIUS
+        def ray_t(angle: float) -> float:
+            """Return the distance to the pitch boundary along ``angle`` from (gx, gy)."""
+            dx = math.cos(angle)
+            dy = math.sin(angle)
+            candidates: list[float] = []
+            if abs(dx) > 1e-9:
+                candidates.append(((STANDARD_PITCH_WIDTH if dx > 0 else 0) - gx) / dx)
+            if abs(dy) > 1e-9:
+                candidates.append(((STANDARD_PITCH_HEIGHT if dy > 0 else 0) - gy) / dy)
+            valid = [tc for tc in candidates if tc > 1e-9]
+            return min(valid) if valid else 0.0
 
-        t_candidates: list[float] = []
-        if abs(dx) > 1e-9:
-            t_candidates.append(((STANDARD_PITCH_WIDTH if dx > 0 else 0) - gx) / dx)
-        if abs(dy) > 1e-9:
-            t_candidates.append(((STANDARD_PITCH_HEIGHT if dy > 0 else 0) - gy) / dy)
+        angle_lo = p.facing - error_rad
+        angle_hi = p.facing + error_rad
 
-        valid_t_candidates = [tc for tc in t_candidates if tc > 1e-9]
-        if not valid_t_candidates:
-            # either no candidates, or they are too close to 0 (no valid intersection)
-            return
-        t = min(valid_t_candidates)
-        end_gx = gx + dx * t
-        end_gy = gy + dy * t
-
+        # Build a fan polygon: apex at player edge, boundary swept across N steps
+        n_steps = 16
         start_sx, start_sy = global_to_screen(gx, gy)
-        end_sx, end_sy = global_to_screen(end_gx, end_gy)
+        points: list[tuple[float, float]] = [(start_sx, start_sy)]
+        for i in range(n_steps + 1):
+            angle = angle_lo + (angle_hi - angle_lo) * i / n_steps
+            t = ray_t(angle)
+            sx, sy = global_to_screen(
+                gx + math.cos(angle) * t, gy + math.sin(angle) * t
+            )
+            points.append((sx, sy))
+
+        arcade.draw_polygon_filled(points, (255, 255, 255, 10))
+
+        # Centre aim line
+        t_centre = ray_t(p.facing)
+        end_sx, end_sy = global_to_screen(
+            gx + math.cos(p.facing) * t_centre,
+            gy + math.sin(p.facing) * t_centre,
+        )
         arcade.draw_line(start_sx, start_sy, end_sx, end_sy, (255, 255, 255, 50), 2)
 
     def _draw_hud(self) -> None:

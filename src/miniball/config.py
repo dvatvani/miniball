@@ -17,3 +17,6 @@ STRIKE_SPEED = 45  # normalised units / s on a strike
 GAME_DURATION = 120.0  # seconds per half (full game = one period)
 TACKLE_COOLDOWN = 1.0  # seconds unable to gain the ball after being tackled
 STRIKE_COOLDOWN = 1.0  # seconds before the kicker can engage with the ball again
+STRIKE_ANGULAR_ERROR_DEGREES = (
+    2  # max angular deviation (±) on a strike, drawn from a uniform distribution
+)
