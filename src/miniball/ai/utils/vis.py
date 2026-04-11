@@ -118,7 +118,12 @@ def plot_state(
             facecolor="w",
             edgecolor="blue" if player.is_teammate else "red",
             alpha=0.9 if player.cooldown_timer == 0 else 0.2,
-            linewidths=2.0,
+            linewidths=4.0
+            if actions
+            and actions.get(player.is_teammate)
+            and actions.get(player.number)
+            and actions.get(player.number).get("strike")
+            else 2.0,
             zorder=5,
         )
         ax.annotate(
