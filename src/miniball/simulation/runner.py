@@ -28,8 +28,8 @@ class MatchResult:
 
 def _df_to_match_result(df: pl.DataFrame) -> MatchResult:
     """Convert a match DataFrame to a MatchResult."""
-    home_team_name = df.filter(pl.col("is_home")).row(0, named=True)["team"]
-    away_team_name = df.filter(~pl.col("is_home")).row(0, named=True)["team"]
+    home_team_name = df.filter(pl.col("is_home")).row(0, named=True)["team_name"]
+    away_team_name = df.filter(~pl.col("is_home")).row(0, named=True)["team_name"]
     last = df.filter(pl.col("is_home")).tail(1).row(0, named=True)
     return MatchResult(
         home_team_name,

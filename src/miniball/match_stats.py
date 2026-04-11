@@ -58,12 +58,12 @@ def avg_positions(df: pl.DataFrame) -> pl.DataFrame:
     team, is_home, player_number, avg_x, avg_y
     """
     return (
-        df.group_by(["team", "is_home", "player_number"])
+        df.group_by(["team_name", "is_home", "player_number"])
         .agg(
-            pl.col("pos_x").mean().alias("avg_x"),
-            pl.col("pos_y").mean().alias("avg_y"),
+            pl.col("player_x").mean().alias("avg_x"),
+            pl.col("player_y").mean().alias("avg_y"),
         )
-        .sort(["team", "player_number"])
+        .sort(["team_name", "player_number"])
     )
 
 
@@ -105,7 +105,7 @@ def annotate_strikes(df: pl.DataFrame) -> pl.DataFrame:
 
     _empty_schema: dict[str, type[pl.DataType]] = {
         "frame_number": pl.Int64,
-        "team": pl.String,
+        "team_name": pl.String,
         "is_home": pl.Boolean,
         "ball_x": pl.Float64,
         "ball_y": pl.Float64,
@@ -125,7 +125,7 @@ def annotate_strikes(df: pl.DataFrame) -> pl.DataFrame:
         .select(
             [
                 "frame_number",
-                "team",
+                "team_name",
                 "is_home",
                 "ball_x",
                 "ball_y",
@@ -176,10 +176,10 @@ def annotate_strikes(df: pl.DataFrame) -> pl.DataFrame:
     # Build a lookup table: for each frame number, which team gains possession?
     next_possession = (
         df.filter(pl.col("has_ball"))
-        .select(["frame_number", "team"])
+        .select(["frame_number", "team_name"])
         .unique(subset=["frame_number"])
         .sort("frame_number")
-        .rename({"frame_number": "next_frame", "team": "next_team"})
+        .rename({"frame_number": "next_frame", "team_name": "next_team"})
     )
 
     # For each strike at frame F, find the first possession at frame > F.
@@ -193,7 +193,7 @@ def annotate_strikes(df: pl.DataFrame) -> pl.DataFrame:
             (
                 pl.col("is_pass")
                 & pl.col("next_team").is_not_null()
-                & (pl.col("next_team") == pl.col("team"))
+                & (pl.col("next_team") == pl.col("team_name"))
             ).alias("is_pass_successful"),
         )
         .drop(["next_frame", "next_team"])
@@ -203,34 +203,36 @@ def annotate_strikes(df: pl.DataFrame) -> pl.DataFrame:
     # Find frames where each team's score increased (a goal was conceded).
     # Sorted by (team, goal_frame) so join_asof can verify within-group order.
     goal_events = (
-        df.select(["frame_number", "team", "team_score"])
-        .unique(subset=["frame_number", "team"])
-        .sort(["team", "frame_number"])
-        .with_columns(pl.col("team_score").shift(1).over("team").alias("prev_score"))
+        df.select(["frame_number", "team_name", "team_score"])
+        .unique(subset=["frame_number", "team_name"])
+        .sort(["team_name", "frame_number"])
+        .with_columns(
+            pl.col("team_score").shift(1).over("team_name").alias("prev_score")
+        )
         .filter(pl.col("team_score") > pl.col("prev_score").fill_null(0))
-        .select(["frame_number", "team"])
+        .select(["frame_number", "team_name"])
         .rename({"frame_number": "goal_frame"})
-        .sort(["team", "goal_frame"])
+        .sort(["team_name", "goal_frame"])
     )
 
     # For each shot at frame F by team T, find the next goal by T after F
-    # (join_asof by="team" searches within the same team's goal events).
+    # (join_asof by="team_name" searches within the same team's goal events).
     # next_event_frame caps the window: the goal must precede the next strike.
     #
     # next_event_frame is computed first (requires global frame order via
     # shift(-1)), then events are re-sorted by (team, goal_lookup) so that
-    # Polars can verify within-group sort order for the by="team" join_asof.
+    # Polars can verify within-group sort order for the by="team_name" join_asof.
     events = events.with_columns(
         pl.col("frame_number").shift(-1).alias("next_event_frame"),
         (pl.col("frame_number") + 1).alias("goal_lookup"),
     )
     return (
-        events.sort(["team", "goal_lookup"])
+        events.sort(["team_name", "goal_lookup"])
         .join_asof(
             goal_events,
             left_on="goal_lookup",
             right_on="goal_frame",
-            by="team",
+            by="team_name",
             strategy="forward",
         )
         .with_columns(
@@ -266,7 +268,7 @@ def strike_stats(df: pl.DataFrame) -> pl.DataFrame:
         shots, shots_on_target, shot_accuracy (0–100 %)
     """
     _empty_schema: dict[str, type[pl.DataType]] = {
-        "team": pl.String,
+        "team_name": pl.String,
         "is_home": pl.Boolean,
         "passes": pl.Int32,
         "passes_completed": pl.Int32,
@@ -282,7 +284,7 @@ def strike_stats(df: pl.DataFrame) -> pl.DataFrame:
         return pl.DataFrame(schema=_empty_schema)
 
     return (
-        events.group_by(["team", "is_home"])
+        events.group_by(["team_name", "is_home"])
         .agg(
             pl.col("is_pass").sum().alias("passes"),
             pl.col("is_pass_successful").sum().alias("passes_completed"),
@@ -323,7 +325,7 @@ def team_summary(df: pl.DataFrame) -> pl.DataFrame:
     ``pass_accuracy`` and ``shot_accuracy`` are also expressed as 0–100 %.
     """
     base = (
-        df.group_by(["team", "is_home"])
+        df.group_by(["team_name", "is_home"])
         .agg(
             pl.col("team_score").max().alias("goals"),
             pl.col("opposition_score").max().alias("goals_against"),
@@ -338,20 +340,20 @@ def team_summary(df: pl.DataFrame) -> pl.DataFrame:
         base.join(
             poss.select(
                 [
-                    "team",
+                    "team_name",
                     "is_home",
                     "possession_pct",
                     "possession_count",
                     "avg_duration",
                 ]
             ),
-            on=["team", "is_home"],
+            on=["team_name", "is_home"],
             how="left",
         )
         .join(
             strikes.select(
                 [
-                    "team",
+                    "team_name",
                     "is_home",
                     "passes",
                     "passes_completed",
@@ -361,7 +363,7 @@ def team_summary(df: pl.DataFrame) -> pl.DataFrame:
                     "shot_accuracy",
                 ]
             ),
-            on=["team", "is_home"],
+            on=["team_name", "is_home"],
             how="left",
         )
         .with_columns(
@@ -404,7 +406,7 @@ def sessionise_possessions(df: pl.DataFrame) -> pl.DataFrame:
     # One row per frame where any player has the ball.
     possessed = (
         df.filter(pl.col("has_ball"))
-        .select(["frame_number", "match_time_seconds", "team", "is_home"])
+        .select(["frame_number", "match_time_seconds", "team_name", "is_home"])
         .sort("frame_number")
     )
 
@@ -412,7 +414,7 @@ def sessionise_possessions(df: pl.DataFrame) -> pl.DataFrame:
         return pl.DataFrame(
             schema={
                 "possession_index": pl.Int32,
-                "team": pl.String,
+                "team_name": pl.String,
                 "is_home": pl.Boolean,
                 "start_frame": pl.Int64,
                 "end_frame": pl.Int64,
@@ -425,7 +427,7 @@ def sessionise_possessions(df: pl.DataFrame) -> pl.DataFrame:
     # Increment the possession counter each time the possessing team changes.
     # fill_null(True) ensures the very first row always opens possession #1.
     possessed = possessed.with_columns(
-        (pl.col("team") != pl.col("team").shift(1))
+        (pl.col("team_name") != pl.col("team_name").shift(1))
         .fill_null(True)
         .cast(pl.Int32)
         .cum_sum()
@@ -435,7 +437,7 @@ def sessionise_possessions(df: pl.DataFrame) -> pl.DataFrame:
     return (
         possessed.group_by("possession_index")
         .agg(
-            pl.col("team").first(),
+            pl.col("team_name").first(),
             pl.col("is_home").first(),
             pl.col("frame_number").min().alias("start_frame"),
             pl.col("frame_number").max().alias("end_frame"),
@@ -475,7 +477,7 @@ def possession_stats(possessions: pl.DataFrame) -> pl.DataFrame:
     so it always sums to 100 % across both teams.  Free-ball time is excluded.
     """
     stats = (
-        possessions.group_by(["team", "is_home"])
+        possessions.group_by(["team_name", "is_home"])
         .agg(
             pl.len().alias("possession_count"),
             pl.col("duration").sum().alias("total_possession_time"),

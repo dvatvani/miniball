@@ -339,7 +339,6 @@ class MatchSimulation:
         # 4. Record this frame for post-game analytics.
         self._history.append(
             FrameRecord(
-                game_time=GAME_DURATION - self._time_remaining,
                 state=home_team_state,
                 actions_team_a=effective_a,
                 actions_team_b=effective_b,
@@ -637,7 +636,7 @@ class MatchSimulation:
 
         Coordinate conventions
         ──────────────────────
-        All positional and directional columns (``pos_x``, ``pos_y``,
+        All positional and directional columns (``player_x``, ``player_y``,
         ``action_dx``, ``action_dy``, ``ball_x``, ``ball_y``, ``ball_vx``,
         ``ball_vy``) are in the **team's own normalised frame**: the team
         always attacks right, X ∈ [0, 120], Y ∈ [0, 80].  This convention
@@ -645,7 +644,7 @@ class MatchSimulation:
         making it suitable for cross-game analysis.
 
         To obtain global coordinates (home team attacks right), use:
-        ``global_x = pos_x if is_home else (120 − pos_x)``
+        ``global_x = player_x if is_home else (120 − player_x)``
         or reconstruct the per-frame ``GameState`` objects via
         ``reconstruct_frames()`` and access ``player.global_location``.
         """

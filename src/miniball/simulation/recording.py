@@ -28,7 +28,6 @@ class FrameRecord:
     actions that were sent to the game engine, not the raw AI outputs.
     """
 
-    game_time: float  # seconds elapsed since kick-off
     state: GameState  # global reference frame (team A perspective)
     actions_team_a: TeamActions  # normalised; team A attacks right
     actions_team_b: TeamActions  # normalised; team B's own frame (also attacks right)
@@ -48,7 +47,6 @@ def build_rows(
         score_a = record.state.match_state.team_current_score
         score_b = record.state.match_state.opposition_current_score
         match_time = record.state.match_state.match_time_seconds
-        t = record.game_time
 
         _null_action: PlayerAction = {"direction": (0.0, 0.0), "strike": False}
         hp = record.human_player
@@ -61,16 +59,16 @@ def build_rows(
             rows.append(
                 {
                     "frame_number": frame_number,
-                    "game_time": t,
                     "match_time_seconds": match_time,
-                    "team": name_a,
+                    "team_name": name_a,
+                    "opposition_name": name_b,
                     "is_home": True,
                     "player_number": num,
                     "is_human_controlled": hp is not None
                     and hp[0] is True
                     and hp[1] == num,
-                    "pos_x": gx,
-                    "pos_y": gy,
+                    "player_x": gx,
+                    "player_y": gy,
                     "has_ball": player.has_ball,
                     "cooldown_timer": player.cooldown_timer,
                     "action_dx": dx,
@@ -96,16 +94,16 @@ def build_rows(
             rows.append(
                 {
                     "frame_number": frame_number,
-                    "game_time": t,
                     "match_time_seconds": match_time,
-                    "team": name_b,
+                    "team_name": name_b,
+                    "opposition_name": name_a,
                     "is_home": False,
                     "player_number": num,
                     "is_human_controlled": hp is not None
                     and hp[0] is False
                     and hp[1] == num,
-                    "pos_x": bx,
-                    "pos_y": by,
+                    "player_x": bx,
+                    "player_y": by,
                     "has_ball": player.has_ball,
                     "cooldown_timer": player.cooldown_timer,
                     "action_dx": dx_b,
@@ -148,8 +146,8 @@ def write_parquet(
     )
     df.with_columns(
         # Spatial / physics – float32
-        pl.col("pos_x").cast(pl.Float32),
-        pl.col("pos_y").cast(pl.Float32),
+        pl.col("player_x").cast(pl.Float32),
+        pl.col("player_y").cast(pl.Float32),
         pl.col("action_dx").cast(pl.Float32),
         pl.col("action_dy").cast(pl.Float32),
         pl.col("ball_x").cast(pl.Float32),
@@ -158,7 +156,6 @@ def write_parquet(
         pl.col("ball_vy").cast(pl.Float32),
         pl.col("cooldown_timer").cast(pl.Float32),
         # Time – float32
-        pl.col("game_time").cast(pl.Float32),
         pl.col("match_time_seconds").cast(pl.Float32),
         # Integers – downcast to smallest fitting type
         pl.col("frame_number").cast(pl.Int16),

@@ -141,10 +141,16 @@ class StatsView(arcade.View):
         bot_row_y = _PITCH_B + 20
 
         arcade.draw_text(
-            str(home["team"]), sx, hdr_y, C_TEAM_A, 18, bold=True, anchor_y="center"
+            str(home["team_name"]),
+            sx,
+            hdr_y,
+            C_TEAM_A,
+            18,
+            bold=True,
+            anchor_y="center",
         )
         arcade.draw_text(
-            str(away["team"]),
+            str(away["team_name"]),
             sr,
             hdr_y,
             C_TEAM_B,

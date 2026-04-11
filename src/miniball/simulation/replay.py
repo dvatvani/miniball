@@ -34,9 +34,8 @@ class FrameSnapshot:
     ----------
     frame_number:
         Zero-based index matching the ``frame_number`` column in the parquet.
-    game_time:
-        Elapsed wall-clock game time in seconds (may exceed
-        ``match_time_seconds`` due to countdown/goal-flash pauses).
+    match_time_seconds:
+        Elapsed game time in seconds since kick-off.
     state_a, state_b:
         ``GameState`` from team A's (home) and team B's (away) perspective
         respectively.  Both use the standard team frame (attacking right).
@@ -46,7 +45,7 @@ class FrameSnapshot:
     """
 
     frame_number: int
-    game_time: float
+    match_time_seconds: float
     state_a: GameState
     state_b: GameState
     actions_a: TeamActions
@@ -82,7 +81,6 @@ def reconstruct_frames(df: pl.DataFrame) -> list[FrameSnapshot]:
         first_home = home_rows.row(0, named=True)
         first_away = away_rows.row(0, named=True)
         frame_number: int = first_home["frame_number"]
-        game_time: float = first_home["game_time"]
         match_time: float = first_home["match_time_seconds"]
 
         # ── Build team A's GameState (home perspective = global frame) ────────
@@ -93,7 +91,7 @@ def reconstruct_frames(df: pl.DataFrame) -> list[FrameSnapshot]:
                 is_home=True,
                 has_ball=row["has_ball"],
                 cooldown_timer=row["cooldown_timer"],
-                location=(row["pos_x"], row["pos_y"]),
+                location=(row["player_x"], row["player_y"]),
             )
             for row in home_rows.iter_rows(named=True)
         ]
@@ -105,7 +103,7 @@ def reconstruct_frames(df: pl.DataFrame) -> list[FrameSnapshot]:
                 is_home=False,
                 has_ball=row["has_ball"],
                 cooldown_timer=row["cooldown_timer"],
-                location=(_W - row["pos_x"], _H - row["pos_y"]),
+                location=(_W - row["player_x"], _H - row["player_y"]),
             )
             for row in away_rows.iter_rows(named=True)
         ]
@@ -132,7 +130,7 @@ def reconstruct_frames(df: pl.DataFrame) -> list[FrameSnapshot]:
                 is_home=False,
                 has_ball=row["has_ball"],
                 cooldown_timer=row["cooldown_timer"],
-                location=(row["pos_x"], row["pos_y"]),
+                location=(row["player_x"], row["player_y"]),
             )
             for row in away_rows.iter_rows(named=True)
         ]
@@ -144,7 +142,7 @@ def reconstruct_frames(df: pl.DataFrame) -> list[FrameSnapshot]:
                 is_home=True,
                 has_ball=row["has_ball"],
                 cooldown_timer=row["cooldown_timer"],
-                location=(_W - row["pos_x"], _H - row["pos_y"]),
+                location=(_W - row["player_x"], _H - row["player_y"]),
             )
             for row in home_rows.iter_rows(named=True)
         ]
@@ -181,7 +179,7 @@ def reconstruct_frames(df: pl.DataFrame) -> list[FrameSnapshot]:
         snapshots.append(
             FrameSnapshot(
                 frame_number=frame_number,
-                game_time=game_time,
+                match_time_seconds=match_time,
                 state_a=state_a,
                 state_b=state_b,
                 actions_a=actions_a,
