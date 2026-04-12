@@ -172,7 +172,12 @@ class StatsView(arcade.View):
                 _fval(away["shots_on_target"]),
                 "{:.0f}",
             ),
-            ("Shots", _fval(home["shots"]), _fval(away["shots"]), "{:.0f}"),
+            (
+                "Shots",
+                _fval(home["shots_attempted"]),
+                _fval(away["shots_attempted"]),
+                "{:.0f}",
+            ),
             (
                 "Shot conversion",
                 _fval(home["shot_conversion_rate"]),
@@ -181,27 +186,21 @@ class StatsView(arcade.View):
             ),
             (
                 "Passes completed",
-                _fval(home["passes_completed"]),
-                _fval(away["passes_completed"]),
+                _fval(home["passes_successful"]),
+                _fval(away["passes_successful"]),
                 "{:.0f}",
             ),
             (
                 "Pass accuracy",
-                _fval(home["pass_accuracy"]),
-                _fval(away["pass_accuracy"]),
+                _fval(home["pass_completion_rate"]),
+                _fval(away["pass_completion_rate"]),
                 "{:.1f}%",
             ),
             (
                 "Possession",
-                _fval(home["possession_pct"]),
-                _fval(away["possession_pct"]),
+                _fval(home["possession_percentage"]),
+                _fval(away["possession_percentage"]),
                 "{:.1f}%",
-            ),
-            (
-                "Avg poss. duration",
-                _fval(home["avg_duration"]),
-                _fval(away["avg_duration"]),
-                "{:.1f}s",
             ),
         ]
         n = len(stat_rows)

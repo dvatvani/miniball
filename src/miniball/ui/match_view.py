@@ -7,7 +7,6 @@ from typing import Literal
 
 import arcade
 
-from miniball import match_stats
 from miniball.config import (
     PLAYER_RADIUS,
     STANDARD_PITCH_HEIGHT,
@@ -75,7 +74,7 @@ class MatchView(arcade.View):
         self._joystick = None
         self._joy_axis_state: dict[str, float] = {}
 
-        self._stats_countdown: float = 3.0
+        self._stats_countdown: float = 1.0
 
     def on_show_view(self) -> None:
         arcade.set_background_color((30, 30, 30, 255))
@@ -298,13 +297,25 @@ class MatchView(arcade.View):
     def _transition_to_stats(self) -> None:
         from miniball.ui.stats_view import StatsView
 
-        match_df = self.sim.build_match_df()
         team_summary_df = None
         avg_positions_df = None
-        if match_df is not None:
-            self.sim.export_history()
-            team_summary_df = match_stats.team_summary(match_df)
-            avg_positions_df = match_stats.avg_positions(match_df)
+        saved_path = self.sim.export_history()
+        if saved_path is not None:
+            try:
+                import duckdb
+
+                con = duckdb.connect("db/miniball.duckdb", read_only=True)
+                filename = str(saved_path)
+                team_summary_df = con.execute(
+                    "SELECT * FROM team_match WHERE filename = ?", [filename]
+                ).pl()
+                avg_positions_df = con.execute(
+                    "SELECT player_number, is_home, avg_x, avg_y FROM player_match WHERE filename = ?",
+                    [filename],
+                ).pl()
+                con.close()
+            except Exception:
+                pass
 
         self.window.show_view(
             StatsView(

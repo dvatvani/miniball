@@ -25,6 +25,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
+from pathlib import Path
 
 import polars as pl
 
@@ -377,13 +378,16 @@ class MatchSimulation:
 
     # ── Analytics ─────────────────────────────────────────────────────────────
 
-    def export_history(self) -> None:
-        """Write the match history to a parquet file on demand."""
+    def export_history(self) -> Path | None:
+        """Write the match history to a parquet file on demand, returning the path."""
+        from pathlib import Path  # noqa: F401  (for the return-type annotation)
+
         from miniball.simulation.recording import write_parquet
 
         df = self.build_match_df()
         if df is not None:
-            write_parquet(df, self.team_a_config.name, self.team_b_config.name)
+            return write_parquet(df, self.team_a_config.name, self.team_b_config.name)
+        return None
 
     # ── AI interface ──────────────────────────────────────────────────────────
 

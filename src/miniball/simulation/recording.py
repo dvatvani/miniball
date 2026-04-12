@@ -126,7 +126,7 @@ def write_parquet(
     home_team_name: str,
     away_team_name: str,
     verbose: bool = True,
-) -> None:
+) -> Path:
     """Write a match history DataFrame to a timestamped parquet file.
 
     Narrow dtypes are applied here (not in ``build_match_df``) so that
@@ -166,3 +166,4 @@ def write_parquet(
     if verbose:
         n_frames = df["frame_number"].n_unique()
         print(f"Match data saved → {path}  ({n_frames} frames · {len(df)} rows)")
+    return path
