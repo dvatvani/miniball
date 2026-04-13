@@ -165,36 +165,36 @@ class StatsView(arcade.View):
             return float(v) if v is not None else 0.0
 
         stat_rows: list[tuple[str, float, float, str]] = [
-            ("Goals", _fval(home["goals"]), _fval(away["goals"]), "{:.0f}"),
+            ("Goals", _fval(home["team_score"]), _fval(away["team_score"]), "{:.0f}"),
             (
-                "Shots on target",
-                _fval(home["shots_on_target"]),
-                _fval(away["shots_on_target"]),
+                "Strikes attempted",
+                _fval(home["strikes_attempted"]),
+                _fval(away["strikes_attempted"]),
                 "{:.0f}",
             ),
             (
-                "Shots",
-                _fval(home["shots_attempted"]),
-                _fval(away["shots_attempted"]),
+                "Strikes completed",
+                _fval(home["strikes_successful"]),
+                _fval(away["strikes_successful"]),
                 "{:.0f}",
             ),
             (
-                "Shot conversion",
-                _fval(home["shot_conversion_rate"]),
-                _fval(away["shot_conversion_rate"]),
+                "Strike conversion",
+                _fval(home["strike_completion_rate"]),
+                _fval(away["strike_completion_rate"]),
                 "{:.1f}%",
             ),
             (
-                "Passes completed",
-                _fval(home["passes_successful"]),
-                _fval(away["passes_successful"]),
+                "Tackles",
+                _fval(home["tackles"]),
+                _fval(away["tackles"]),
                 "{:.0f}",
             ),
             (
-                "Pass accuracy",
-                _fval(home["pass_completion_rate"]),
-                _fval(away["pass_completion_rate"]),
-                "{:.1f}%",
+                "Interceptions",
+                _fval(home["interceptions"]),
+                _fval(away["interceptions"]),
+                "{:.0f}",
             ),
             (
                 "Possession",

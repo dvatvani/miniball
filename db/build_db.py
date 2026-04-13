@@ -30,8 +30,6 @@ _GOAL_CENTER_Y = _PITCH_H / 2
 _GOAL_HALF_H = _GOAL_H / 2
 _GOAL_LO = _GOAL_CENTER_Y - _GOAL_HALF_H
 _GOAL_HI = _GOAL_CENTER_Y + _GOAL_HALF_H
-_SHOT_Y_LO = _GOAL_CENTER_Y - 2 * _GOAL_HALF_H
-_SHOT_Y_HI = _GOAL_CENTER_Y + 2 * _GOAL_HALF_H
 _PITCH_MID_X = _PITCH_W / 2
 
 
@@ -53,6 +51,7 @@ def build_db() -> None:
         _create_team_match(con)
         _create_human_player_match(con)
         _create_human_team_match(con)
+        _create_match(con)
 
     finally:
         con.close()
@@ -96,7 +95,7 @@ def _create_tracking(con: duckdb.DuckDBPyConnection) -> None:
 
 
 def _create_events(con: duckdb.DuckDBPyConnection) -> None:
-    con.execute(f"""
+    con.execute("""
     CREATE OR REPLACE VIEW events AS
     WITH
     -- One row per frame where a player has the ball
@@ -140,18 +139,6 @@ def _create_events(con: duckdb.DuckDBPyConnection) -> None:
         WINDOW w AS (PARTITION BY filename ORDER BY frame_number)
     ),
 
-    -- Pre-compute y_at_goal for shot classification (only for strikes)
-    strikes_with_projection AS (
-        SELECT
-            *,
-            CASE WHEN action_dx > 1e-6
-                 THEN ball_y + (action_dy / action_dx) * ({_PITCH_W} - ball_x)
-                 ELSE NULL
-            END AS y_at_goal
-        FROM transitions
-        WHERE strike
-    ),
-
     strike_events AS (
         SELECT
             filename, frame_number,
@@ -160,30 +147,11 @@ def _create_events(con: duckdb.DuckDBPyConnection) -> None:
             opposition_name,
             is_home,
             match_time_seconds,
-            CASE WHEN ball_x > {_PITCH_MID_X}
-                      AND action_dx > 1e-6
-                      AND y_at_goal BETWEEN {_SHOT_Y_LO} AND {_SHOT_Y_HI}
-                 THEN 'shot' ELSE 'pass'
-            END AS event_type,
-            -- success: shot → goal scored before next ball-holder frame; pass → next
-            -- holder is a teammate. Both are NULL when the match ended before
-            -- resolution (next_home_score / next_away_score / next_team is NULL).
-            CASE WHEN ball_x > {_PITCH_MID_X}
-                      AND action_dx > 1e-6
-                      AND y_at_goal BETWEEN {_SHOT_Y_LO} AND {_SHOT_Y_HI}
-                 THEN CASE WHEN is_home THEN (next_home_score > home_score)
-                           ELSE (next_away_score > away_score)
-                      END
-                 ELSE CASE WHEN next_team_name IS NULL THEN NULL
-                           ELSE (next_team_name = team_name)
-                      END
+            'strike' AS event_type,
+            -- success: next holder is a teammate (NULL when match ended before resolution)
+            CASE WHEN next_team_name IS NULL THEN NULL
+                 ELSE (next_team_name = team_name)
             END AS success,
-            CASE WHEN ball_x > {_PITCH_MID_X}
-                      AND action_dx > 1e-6
-                      AND y_at_goal BETWEEN {_SHOT_Y_LO} AND {_SHOT_Y_HI}
-                 THEN y_at_goal BETWEEN {_GOAL_LO} AND {_GOAL_HI}
-                 ELSE NULL
-            END AS shot_on_target,
             is_human_controlled,
             player_x   AS player_x,
             player_y   AS player_y,
@@ -191,7 +159,8 @@ def _create_events(con: duckdb.DuckDBPyConnection) -> None:
             ball_y     AS ball_y,
             action_dx,
             action_dy
-        FROM strikes_with_projection
+        FROM transitions
+        WHERE strike
     ),
 
     -- Gain events: a player acquires the ball
@@ -219,7 +188,6 @@ def _create_events(con: duckdb.DuckDBPyConnection) -> None:
                 ELSE 'ball_receipt'
             END AS event_type,
             CAST(NULL AS BOOLEAN) AS success,
-            CAST(NULL AS BOOLEAN) AS shot_on_target,
             is_human_controlled,
             player_x,
             player_y,
@@ -315,7 +283,6 @@ def _create_events(con: duckdb.DuckDBPyConnection) -> None:
                  ELSE 'own_goal'
             END                                  AS event_type,
             CAST(NULL AS BOOLEAN)                AS success,
-            CAST(NULL AS BOOLEAN)                AS shot_on_target,
             CAST(NULL AS BOOLEAN)                AS is_human_controlled,
             CAST(NULL AS FLOAT)                  AS player_x,
             CAST(NULL AS FLOAT)                  AS player_y,
@@ -345,7 +312,6 @@ def _create_events(con: duckdb.DuckDBPyConnection) -> None:
             match_time_seconds,
             'final_whistle'  AS event_type,
             CAST(NULL AS BOOLEAN) AS success,
-            CAST(NULL AS BOOLEAN) AS shot_on_target,
             is_human_controlled  AS is_human_controlled,
             CAST(NULL AS FLOAT)   AS player_x,
             CAST(NULL AS FLOAT)   AS player_y,
@@ -453,9 +419,12 @@ def _create_player_possession(con: duckdb.DuckDBPyConnection) -> None:
             AND e.event_type IN ('kickoff', 'tackle', 'ball_receipt', 'interception')
     ),
 
-    -- Possession end (direct): events at end_frame attributed to this player (pass/shot/final_whistle)
+    -- Possession end (direct): events at end_frame attributed to this player (strike/final_whistle).
+    -- DISTINCT ON deduplicates the edge case where the last frame has both a strike and a
+    -- final_whistle event; final_whistle takes priority.
     possession_end_direct AS (
-        SELECT sl.filename, sl.session_id,
+        SELECT DISTINCT ON (sl.filename, sl.session_id)
+               sl.filename, sl.session_id,
                e.frame_number    AS possession_end_frame_number,
                e.match_time_seconds AS possession_end_match_time_seconds,
                e.event_type      AS possession_end_event_type,
@@ -463,15 +432,15 @@ def _create_player_possession(con: duckdb.DuckDBPyConnection) -> None:
                e.player_x        AS possession_end_player_x,
                e.player_y        AS possession_end_player_y,
                e.ball_x          AS possession_end_ball_x,
-               e.ball_y          AS possession_end_ball_y,
-               e.shot_on_target  AS possession_end_shot_on_target,
-               e.success         AS possession_end_shot_success
+               e.ball_y          AS possession_end_ball_y
         FROM sessions_with_lead sl
         LEFT JOIN events_data e
             ON  sl.filename      = e.filename
             AND sl.end_frame     = e.frame_number
             AND sl.player_number = e.player_number
-            AND e.event_type IN ('pass', 'shot', 'final_whistle')
+            AND e.event_type IN ('strike', 'final_whistle')
+        ORDER BY sl.filename, sl.session_id,
+                 CASE WHEN e.event_type = 'strike' THEN 0 ELSE 1 END
     ),
 
     -- Possession end (inferred): events at next session's start_frame attributed to the next player
@@ -505,9 +474,7 @@ def _create_player_possession(con: duckdb.DuckDBPyConnection) -> None:
             COALESCE(ped.possession_end_player_x,      pei.possession_end_player_x)      AS possession_end_player_x,
             COALESCE(ped.possession_end_player_y,      pei.possession_end_player_y)      AS possession_end_player_y,
             COALESCE(ped.possession_end_ball_x,        pei.possession_end_ball_x)        AS possession_end_ball_x,
-            COALESCE(ped.possession_end_ball_y,        pei.possession_end_ball_y)        AS possession_end_ball_y,
-            ped.possession_end_shot_on_target,
-            ped.possession_end_shot_success
+            COALESCE(ped.possession_end_ball_y,        pei.possession_end_ball_y)        AS possession_end_ball_y
         FROM sessions_with_lead sl
         LEFT JOIN possession_end_direct   ped ON sl.filename = ped.filename AND sl.session_id = ped.session_id
         LEFT JOIN possession_end_inferred pei ON sl.filename = pei.filename AND sl.session_id = pei.session_id
@@ -524,13 +491,17 @@ def _create_player_possession(con: duckdb.DuckDBPyConnection) -> None:
         JOIN events_data e ON sl.filename = e.filename
         WHERE sl.ended_with_strike
           AND (
-              (e.frame_number > sl.end_frame AND e.event_type IN ('tackle', 'interception', 'ball_receipt', 'final_whistle'))
-              OR (e.frame_number >= sl.end_frame AND e.event_type IN ('goal', 'own_goal'))
+              (e.frame_number > sl.end_frame AND e.event_type IN ('tackle', 'interception', 'ball_receipt'))
+              OR (e.frame_number >= sl.end_frame AND e.event_type IN ('goal', 'own_goal', 'final_whistle'))
           )
         GROUP BY sl.filename, sl.session_id
     ),
 
-    -- Retrieve the actual event details at the extended end frame
+    -- Retrieve the actual event details at the extended end frame.
+    -- Apply the same > / >= eligibility as extended_end_frame so that a ball_receipt
+    -- at end_frame is never considered (it requires > end_frame).
+    -- When a ball_receipt/tackle/interception ties with a final_whistle at the same frame,
+    -- prefer the ball-resolution event (the possession truly resolved).
     extended_end_event AS (
         SELECT DISTINCT ON (eef.filename, eef.session_id)
                eef.filename, eef.session_id,
@@ -542,9 +513,16 @@ def _create_player_possession(con: duckdb.DuckDBPyConnection) -> None:
                e.ball_x          AS extended_possession_end_ball_x,
                e.ball_y          AS extended_possession_end_ball_y
         FROM extended_end_frame eef
-        JOIN events_data e ON eef.filename = e.filename AND eef.ext_end_frame = e.frame_number
-            AND e.event_type IN ('tackle', 'interception', 'ball_receipt', 'goal', 'own_goal', 'final_whistle')
-        ORDER BY eef.filename, eef.session_id, e.frame_number
+        JOIN sessions_with_lead sl ON eef.filename = sl.filename AND eef.session_id = sl.session_id
+        JOIN events_data e
+            ON  eef.filename = e.filename
+            AND eef.ext_end_frame = e.frame_number
+            AND (
+                (e.frame_number > sl.end_frame  AND e.event_type IN ('tackle', 'interception', 'ball_receipt'))
+                OR (e.frame_number >= sl.end_frame AND e.event_type IN ('goal', 'own_goal', 'final_whistle'))
+            )
+        ORDER BY eef.filename, eef.session_id, e.frame_number,
+                 CASE WHEN e.event_type IN ('tackle', 'interception', 'ball_receipt') THEN 0 ELSE 1 END
     )
 
     SELECT
@@ -571,8 +549,6 @@ def _create_player_possession(con: duckdb.DuckDBPyConnection) -> None:
         pe.possession_end_ball_x,
         pe.possession_end_ball_y,
         pe.possession_end_match_time_seconds - ps.possession_start_match_time_seconds AS possession_duration,
-        pe.possession_end_shot_on_target,
-        pe.possession_end_shot_success,
         -- Extended possession end
         coalesce(ee.extended_possession_end_frame_number, pe.possession_end_frame_number) as extended_possession_end_frame_number,
         coalesce(ee.extended_possession_end_match_time_seconds, pe.possession_end_match_time_seconds) as extended_possession_end_match_time_seconds,
@@ -687,34 +663,31 @@ def _create_player_match(con: duckdb.DuckDBPyConnection) -> None:
 
     -- All possession-derived stats in a single pass over player_possession.
     -- is_last_in_team_possession (pre-computed in that view) tells us whether the
-    -- team lost the ball after this session, letting us infer pass success and
+    -- team lost the ball after this session, letting us infer strike success and
     -- turnovers without any additional joins.
     poss_stats AS (
         SELECT
             filename, team_name, player_number,
             COUNT(*)                                                              AS ball_touches,
             SUM(possession_end_frame_number
-                - possession_start_frame_number + 1)::DOUBLE / 60.0              AS time_in_possession,
-            COUNT(*) FILTER (WHERE possession_start_event_type IN ('tackle', 'interception'))
-                                                                                  AS ball_recoveries,
-            COUNT(*) FILTER (WHERE possession_end_event_type = 'pass')            AS passes_attempted,
-            COUNT(*) FILTER (WHERE possession_end_event_type = 'pass'
-                               AND NOT is_last_in_team_possession)                AS passes_successful,
-            COUNT(*) FILTER (WHERE possession_end_event_type = 'shot')            AS shots_attempted,
-            COUNT(*) FILTER (
-                WHERE possession_end_event_type = 'shot'
-                  AND possession_end_shot_on_target
-                  AND possession_end_shot_success IS NOT NULL
-            )                                                                     AS shots_on_target,
+                - possession_start_frame_number + 1)::DOUBLE / 60.0               AS time_in_possession,
+            COUNT(*) FILTER (WHERE possession_start_event_type = 'tackle')        AS tackles,
+            COUNT(*) FILTER (WHERE possession_start_event_type = 'interception')  AS interceptions,
+            COALESCE(tackles, 0) + COALESCE(interceptions, 0)                     AS ball_recoveries,
+            COUNT(*) FILTER (WHERE possession_end_event_type = 'strike')          AS strikes_attempted,
+            COUNT(*) FILTER (WHERE possession_end_event_type = 'strike'
+                               AND NOT is_last_in_team_possession)                AS strikes_successful,
             COUNT(*) FILTER (WHERE extended_possession_end_event_type = 'goal')   AS goals,
             COUNT(*) FILTER (WHERE extended_possession_end_event_type = 'own_goal') AS own_goals,
-            -- Turnovers: tackled directly, failed pass, or shot intercepted by opponent
+            -- Turnovers: tackled directly, or struck the ball and lost possession
             COUNT(*) FILTER (
                 WHERE possession_end_event_type = 'tackle'
-                   OR (possession_end_event_type = 'pass' AND is_last_in_team_possession)
-                   OR (possession_end_event_type = 'shot'
-                       AND extended_possession_end_event_type = 'interception')
-            )                                                                     AS turnovers,
+            )                                                                     AS tackle_turnovers,
+            COUNT(*) FILTER (
+                WHERE possession_end_event_type = 'strike' AND is_last_in_team_possession and extended_possession_end_event_type != 'final_whistle'
+            )                                                                     AS interception_turnovers,
+
+            COALESCE(tackle_turnovers, 0) + COALESCE(interception_turnovers, 0)   AS turnovers,
             SUM(is_last_in_team_possession::INTEGER)                              AS team_possession_count
         FROM player_possession
         GROUP BY filename, team_name, player_number
@@ -730,23 +703,21 @@ def _create_player_match(con: duckdb.DuckDBPyConnection) -> None:
         ap.avg_y,
         COALESCE(ps.time_in_possession, 0)  AS time_in_possession,
         COALESCE(ps.ball_touches, 0)        AS ball_touches,
+        COALESCE(ps.tackles, 0)             AS tackles,
+        COALESCE(ps.interceptions, 0)       AS interceptions,
         COALESCE(ps.ball_recoveries, 0)     AS ball_recoveries,
+        COALESCE(ps.tackle_turnovers, 0)    AS tackle_turnovers,
+        COALESCE(ps.interception_turnovers, 0) AS interception_turnovers,
         COALESCE(ps.turnovers, 0)           AS turnovers,
-        COALESCE(ps.passes_attempted, 0)    AS passes_attempted,
-        COALESCE(ps.passes_successful, 0)   AS passes_successful,
-        CASE WHEN COALESCE(ps.passes_attempted, 0) > 0
-             THEN 100.0 * ps.passes_successful / ps.passes_attempted
+        COALESCE(ps.strikes_attempted, 0)   AS strikes_attempted,
+        COALESCE(ps.strikes_successful, 0)  AS strikes_successful,
+        CASE WHEN COALESCE(ps.strikes_attempted, 0) > 0
+             THEN 100.0 * ps.strikes_successful / ps.strikes_attempted
              ELSE 0.0
-        END                                 AS pass_completion_rate,
-        COALESCE(ps.shots_attempted, 0)     AS shots_attempted,
-        COALESCE(ps.shots_on_target, 0)     AS shots_on_target,
+        END                                 AS strike_completion_rate,
         COALESCE(ps.goals, 0)               AS goals,
         COALESCE(ps.own_goals, 0)           AS own_goals,
-        COALESCE(ps.team_possession_count, 0) AS team_possession_count,
-        CASE WHEN COALESCE(ps.shots_attempted, 0) > 0
-             THEN 100.0 * ps.goals / ps.shots_attempted
-             ELSE 0.0
-        END                                 AS shot_conversion_rate
+        COALESCE(ps.team_possession_count, 0) AS team_possession_count
     FROM avg_position ap
     LEFT JOIN poss_stats ps ON ap.filename = ps.filename
                             AND ap.team_name = ps.team_name
@@ -765,12 +736,14 @@ def _create_team_match(con: duckdb.DuckDBPyConnection) -> None:
             ANY_VALUE(is_home)                                      AS is_home,
             SUM(time_in_possession)                                 AS time_in_possession,
             SUM(ball_touches)                                       AS ball_touches,
+            SUM(tackles)                                            AS tackles,
+            SUM(interceptions)                                      AS interceptions,
             SUM(ball_recoveries)                                    AS ball_recoveries,
+            SUM(tackle_turnovers)                                   AS tackle_turnovers,
+            SUM(interception_turnovers)                             AS interception_turnovers,
             SUM(turnovers)                                          AS turnovers,
-            SUM(passes_attempted)                                   AS passes_attempted,
-            SUM(passes_successful)                                  AS passes_successful,
-            SUM(shots_attempted)                                    AS shots_attempted,
-            SUM(shots_on_target)                                    AS shots_on_target,
+            SUM(strikes_attempted)                                  AS strikes_attempted,
+            SUM(strikes_successful)                                 AS strikes_successful,
             SUM(goals)                                              AS goals,
             SUM(own_goals)                                          AS own_goals
         FROM player_match
@@ -789,22 +762,20 @@ def _create_team_match(con: duckdb.DuckDBPyConnection) -> None:
         100.0 * ts.time_in_possession
               / SUM(ts.time_in_possession) OVER (PARTITION BY ts.filename) AS possession_percentage,
         ts.ball_touches,
+        ts.tackles,
+        ts.interceptions,
         ts.ball_recoveries,
+        ts.tackle_turnovers,
+        ts.interception_turnovers,
         ts.turnovers,
-        ts.passes_attempted,
-        ts.passes_successful,
-        CASE WHEN ts.passes_attempted > 0
-             THEN 100.0 * ts.passes_successful / ts.passes_attempted
+        ts.strikes_attempted,
+        ts.strikes_successful,
+        CASE WHEN ts.strikes_attempted > 0
+             THEN 100.0 * ts.strikes_successful / ts.strikes_attempted
              ELSE 0.0
-        END                                     AS pass_completion_rate,
-        ts.shots_attempted,
-        ts.shots_on_target,
+        END                                     AS strike_completion_rate,
         ts.goals,
         ts.own_goals,
-        CASE WHEN ts.shots_attempted > 0
-             THEN 100.0 * ts.goals / ts.shots_attempted
-             ELSE 0.0
-        END                                     AS shot_conversion_rate,
         strptime(
             regexp_extract(ts.filename, 'match_(\\d{8}_\\d{6})_', 1),
             '%Y%m%d_%H%M%S'
@@ -839,22 +810,15 @@ def _create_human_player_match(con: duckdb.DuckDBPyConnection) -> None:
                 - possession_start_frame_number + 1)::DOUBLE / 60.0              AS time_in_possession,
             COUNT(*) FILTER (WHERE possession_start_event_type IN ('tackle', 'interception'))
                                                                                   AS ball_recoveries,
-            COUNT(*) FILTER (WHERE possession_end_event_type = 'pass')            AS passes_attempted,
-            COUNT(*) FILTER (WHERE possession_end_event_type = 'pass'
-                               AND NOT is_last_in_team_possession)                AS passes_successful,
-            COUNT(*) FILTER (WHERE possession_end_event_type = 'shot')            AS shots_attempted,
-            COUNT(*) FILTER (
-                WHERE possession_end_event_type = 'shot'
-                  AND possession_end_shot_on_target
-                  AND possession_end_shot_success IS NOT NULL
-            )                                                                     AS shots_on_target,
+            COUNT(*) FILTER (WHERE possession_end_event_type = 'strike')          AS strikes_attempted,
+            COUNT(*) FILTER (WHERE possession_end_event_type = 'strike'
+                               AND NOT is_last_in_team_possession)                AS strikes_successful,
             COUNT(*) FILTER (WHERE extended_possession_end_event_type = 'goal')   AS goals,
             COUNT(*) FILTER (WHERE extended_possession_end_event_type = 'own_goal') AS own_goals,
+            -- Turnovers: tackled directly, or struck the ball and lost possession
             COUNT(*) FILTER (
                 WHERE possession_end_event_type = 'tackle'
-                   OR (possession_end_event_type = 'pass' AND is_last_in_team_possession)
-                   OR (possession_end_event_type = 'shot'
-                       AND extended_possession_end_event_type = 'interception')
+                   OR (possession_end_event_type = 'strike' AND is_last_in_team_possession)
             )                                                                     AS turnovers,
             SUM(is_last_in_team_possession::INTEGER)                              AS team_possession_count
         FROM player_possession
@@ -874,21 +838,15 @@ def _create_human_player_match(con: duckdb.DuckDBPyConnection) -> None:
         COALESCE(ps.ball_touches, 0)        AS ball_touches,
         COALESCE(ps.ball_recoveries, 0)     AS ball_recoveries,
         COALESCE(ps.turnovers, 0)           AS turnovers,
-        COALESCE(ps.passes_attempted, 0)    AS passes_attempted,
-        COALESCE(ps.passes_successful, 0)   AS passes_successful,
-        CASE WHEN COALESCE(ps.passes_attempted, 0) > 0
-             THEN 100.0 * ps.passes_successful / ps.passes_attempted
+        COALESCE(ps.strikes_attempted, 0)   AS strikes_attempted,
+        COALESCE(ps.strikes_successful, 0)  AS strikes_successful,
+        CASE WHEN COALESCE(ps.strikes_attempted, 0) > 0
+             THEN 100.0 * ps.strikes_successful / ps.strikes_attempted
              ELSE 0.0
-        END                                 AS pass_completion_rate,
-        COALESCE(ps.shots_attempted, 0)     AS shots_attempted,
-        COALESCE(ps.shots_on_target, 0)     AS shots_on_target,
+        END                                 AS strike_completion_rate,
         COALESCE(ps.goals, 0)               AS goals,
         COALESCE(ps.own_goals, 0)           AS own_goals,
-        COALESCE(ps.team_possession_count, 0) AS team_possession_count,
-        CASE WHEN COALESCE(ps.shots_attempted, 0) > 0
-             THEN 100.0 * ps.goals / ps.shots_attempted
-             ELSE 0.0
-        END                                 AS shot_conversion_rate
+        COALESCE(ps.team_possession_count, 0) AS team_possession_count
     FROM avg_position ap
     LEFT JOIN poss_stats ps ON ap.filename = ps.filename
                             AND ap.team_name = ps.team_name
@@ -909,10 +867,8 @@ def _create_human_team_match(con: duckdb.DuckDBPyConnection) -> None:
             SUM(ball_touches)                                       AS ball_touches,
             SUM(ball_recoveries)                                    AS ball_recoveries,
             SUM(turnovers)                                          AS turnovers,
-            SUM(passes_attempted)                                   AS passes_attempted,
-            SUM(passes_successful)                                  AS passes_successful,
-            SUM(shots_attempted)                                    AS shots_attempted,
-            SUM(shots_on_target)                                    AS shots_on_target,
+            SUM(strikes_attempted)                                  AS strikes_attempted,
+            SUM(strikes_successful)                                 AS strikes_successful,
             SUM(goals)                                              AS goals,
             SUM(own_goals)                                          AS own_goals
         FROM human_player_match
@@ -932,20 +888,14 @@ def _create_human_team_match(con: duckdb.DuckDBPyConnection) -> None:
         ts.ball_touches,
         ts.ball_recoveries,
         ts.turnovers,
-        ts.passes_attempted,
-        ts.passes_successful,
-        CASE WHEN ts.passes_attempted > 0
-             THEN 100.0 * ts.passes_successful / ts.passes_attempted
+        ts.strikes_attempted,
+        ts.strikes_successful,
+        CASE WHEN ts.strikes_attempted > 0
+             THEN 100.0 * ts.strikes_successful / ts.strikes_attempted
              ELSE 0.0
-        END                                     AS pass_completion_rate,
-        ts.shots_attempted,
-        ts.shots_on_target,
+        END                                     AS strike_completion_rate,
         ts.goals,
         ts.own_goals,
-        CASE WHEN ts.shots_attempted > 0
-             THEN 100.0 * ts.goals / ts.shots_attempted
-             ELSE 0.0
-        END                                     AS shot_conversion_rate,
         strptime(
             regexp_extract(ts.filename, 'match_(\\d{8}_\\d{6})_', 1),
             '%Y%m%d_%H%M%S'
@@ -953,6 +903,27 @@ def _create_human_team_match(con: duckdb.DuckDBPyConnection) -> None:
     FROM team_stats ts
     LEFT JOIN team_stats opp
         ON ts.filename = opp.filename AND ts.opposition_name = opp.team_name
+    """)
+
+
+def _create_match(con: duckdb.DuckDBPyConnection) -> None:
+    con.execute("""
+    CREATE OR REPLACE VIEW match AS
+    SELECT
+        filename,
+        strptime(
+            regexp_extract(filename, 'match_(\\d{8}_\\d{6})_', 1),
+            '%Y%m%d_%H%M%S'
+        )                                                           AS timestamp,
+        MAX(CASE WHEN is_home     THEN team_name END)               AS home_team,
+        MAX(CASE WHEN NOT is_home THEN team_name END)               AS away_team,
+        MAX(CASE WHEN is_home     THEN team_score END)              AS home_score,
+        MAX(CASE WHEN NOT is_home THEN team_score END)              AS away_score,
+        MAX(match_time_seconds)                                     AS game_length_seconds,
+        BOOL_OR(is_home AND is_human_controlled)                    AS home_is_human_controlled,
+        BOOL_OR(NOT is_home AND is_human_controlled)                AS away_is_human_controlled
+    FROM tracking
+    GROUP BY filename
     """)
 
 
