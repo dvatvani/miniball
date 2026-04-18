@@ -45,7 +45,7 @@ class BaselineAI(BaseAI):
     4. If the zone is empty, the player returns to their formation position.
     """
 
-    STRIKE_RANGE: float = 40.0
+    STRIKE_RANGE: float = 20.0
     PRESSURE_RANGE: float = 10.0
     COVERAGE_FRACTION: float = 0.9
     PASSING_LANE_ANGLE: float = abs(
