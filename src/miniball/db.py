@@ -664,7 +664,8 @@ def _create_player_match(con: duckdb.DuckDBPyConnection) -> None:
                 WHERE possession_end_event_type = 'tackle'
             )                                                                     AS tackle_turnovers,
             COUNT(*) FILTER (
-                WHERE possession_end_event_type = 'strike' AND is_last_in_team_possession and extended_possession_end_event_type != 'final_whistle'
+                WHERE possession_end_event_type = 'strike' AND is_last_in_team_possession
+                  AND extended_possession_end_event_type NOT IN ('final_whistle', 'goal', 'own_goal')
             )                                                                     AS interception_turnovers,
 
             COALESCE(tackle_turnovers, 0) + COALESCE(interception_turnovers, 0)   AS turnovers,
@@ -798,7 +799,8 @@ def _create_human_player_match(con: duckdb.DuckDBPyConnection) -> None:
             -- Turnovers: tackled directly, or struck the ball and lost possession
             COUNT(*) FILTER (
                 WHERE possession_end_event_type = 'tackle'
-                   OR (possession_end_event_type = 'strike' AND is_last_in_team_possession)
+                   OR (possession_end_event_type = 'strike' AND is_last_in_team_possession
+                       AND extended_possession_end_event_type NOT IN ('final_whistle', 'goal', 'own_goal'))
             )                                                                     AS turnovers,
             SUM(is_last_in_team_possession::INTEGER)                              AS team_possession_count
         FROM player_possession
