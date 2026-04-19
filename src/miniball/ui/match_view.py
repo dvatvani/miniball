@@ -302,9 +302,9 @@ class MatchView(arcade.View):
         saved_path = self.sim.export_history()
         if saved_path is not None:
             try:
-                import duckdb
+                from miniball.db import create_db
 
-                con = duckdb.connect("db/miniball.duckdb", read_only=True)
+                con = create_db()
                 filename = str(saved_path)
                 team_summary_df = con.execute(
                     "SELECT * FROM team_match WHERE filename = ?", [filename]

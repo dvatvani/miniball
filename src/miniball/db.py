@@ -1,15 +1,6 @@
-"""Build the miniball DuckDB analytics database with views over match parquet files.
-
-Run from the project root:
-    uv run python db/build_db.py
-
-Creates db/miniball.duckdb with views: tracking, events, player_possession,
-team_possession, player_match, team_match.
-"""
+"""In-memory DuckDB analytics database with views over match parquet files."""
 
 from __future__ import annotations
-
-import glob
 
 import duckdb
 
@@ -19,7 +10,6 @@ from miniball.config import (
     STANDARD_PITCH_WIDTH,
 )
 
-DB_PATH = "db/miniball.duckdb"
 MATCH_DATA_GLOB = "match_data/*.parquet"
 
 # Pitch geometry from miniball/config.py, embedded as SQL constants.
@@ -33,29 +23,19 @@ _GOAL_HI = _GOAL_CENTER_Y + _GOAL_HALF_H
 _PITCH_MID_X = _PITCH_W / 2
 
 
-def build_db() -> None:
-    """Create or rebuild the analytics database."""
-    match_files = glob.glob("match_data/*.parquet")
-    if not match_files:
-        print("No parquet files found in match_data/. Run some matches first.")
-        return
-
-    con = duckdb.connect(str(DB_PATH))
-    try:
-        print(f"Building database from {len(match_files)} match file(s)…")
-        _create_tracking(con)
-        _create_events(con)
-        _create_player_possession(con)
-        _create_team_possession(con)
-        _create_player_match(con)
-        _create_team_match(con)
-        _create_human_player_match(con)
-        _create_human_team_match(con)
-        _create_match(con)
-
-    finally:
-        con.close()
-    print(f"\nDatabase ready: {DB_PATH}")
+def create_db() -> duckdb.DuckDBPyConnection:
+    """Create an in-memory analytics database and return the connection."""
+    con = duckdb.connect(":memory:")
+    _create_tracking(con)
+    _create_events(con)
+    _create_player_possession(con)
+    _create_team_possession(con)
+    _create_player_match(con)
+    _create_team_match(con)
+    _create_human_player_match(con)
+    _create_human_team_match(con)
+    _create_match(con)
+    return con
 
 
 # ---------------------------------------------------------------------------
@@ -925,7 +905,3 @@ def _create_match(con: duckdb.DuckDBPyConnection) -> None:
     FROM tracking
     GROUP BY filename
     """)
-
-
-if __name__ == "__main__":
-    build_db()
