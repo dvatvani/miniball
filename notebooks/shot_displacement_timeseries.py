@@ -9,13 +9,13 @@ def _():
     import marimo as mo
     import numpy as np
     import matplotlib.pyplot as plt
-    from miniball.config import STRIKE_SPEED, BALL_DRAG, STANDARD_PITCH_WIDTH
+    from miniball.config import STRIKE_SPEED, BALL_DECEL, STANDARD_PITCH_WIDTH
 
-    return BALL_DRAG, STANDARD_PITCH_WIDTH, STRIKE_SPEED, mo, np, plt
+    return BALL_DECEL, STANDARD_PITCH_WIDTH, STRIKE_SPEED, mo, np, plt
 
 
 @app.cell
-def _(BALL_DRAG, STRIKE_SPEED, mo):
+def _(BALL_DECEL, STRIKE_SPEED, mo):
     strike_speed_slider = mo.ui.slider(
         start=10,
         stop=120,
@@ -24,16 +24,16 @@ def _(BALL_DRAG, STRIKE_SPEED, mo):
         label="Strike speed (units/s)",
         show_value=True,
     )
-    ball_drag_slider = mo.ui.slider(
-        start=0.1,
-        stop=2.0,
-        step=0.01,
-        value=round(BALL_DRAG, 2),
-        label="Ball drag (1/s)",
+    ball_decel_slider = mo.ui.slider(
+        start=1.0,
+        stop=50.0,
+        step=0.5,
+        value=round(BALL_DECEL, 1),
+        label="Ball deceleration (units/s²)",
         show_value=True,
     )
-    mo.vstack([strike_speed_slider, ball_drag_slider])
-    return ball_drag_slider, strike_speed_slider
+    mo.vstack([strike_speed_slider, ball_decel_slider])
+    return ball_decel_slider, strike_speed_slider
 
 
 @app.cell
@@ -49,7 +49,7 @@ def _(np):
 @app.cell
 def _(
     STANDARD_PITCH_WIDTH,
-    ball_drag_slider,
+    ball_decel_slider,
     mo,
     np,
     plt,
@@ -57,15 +57,15 @@ def _(
     strike_speed_slider,
 ):
     v0 = strike_speed_slider.value
-    k = ball_drag_slider.value
+    a = ball_decel_slider.value
 
-    # Time axis: run until ball has lost 99 % of its initial speed
-    t_stop = -np.log(0.01) / k
+    # Ball decelerates linearly: speed(t) = max(0, v0 - a*t)
+    t_stop = v0 / a
     t = np.linspace(0, t_stop, 500)
 
-    # Displacement: integral of v0*exp(-k*t) dt = v0/k * (1 - exp(-k*t))
-    displacement = (v0 / k) * (1 - np.exp(-k * t))
-    total_distance = v0 / k  # asymptotic limit
+    # Displacement: integral of (v0 - a*t) dt = v0*t - a*t²/2
+    displacement = v0 * t - 0.5 * a * t**2
+    total_distance = v0**2 / (2 * a)  # exact stop distance
 
     fig, ax = plt.subplots(figsize=(8, 4))
 
@@ -84,7 +84,7 @@ def _(
         color="#e07040",
         linestyle=":",
         linewidth=1.5,
-        label=f"Total distance ≈ {total_distance:.1f}",
+        label=f"Total distance = {total_distance:.1f}",
     )
 
     # Rematch reference observations
@@ -94,7 +94,7 @@ def _(
 
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Displacement (game units)")
-    ax.set_title(f"Ball displacement  |  v₀ = {v0} u/s,  drag = {k:.2f} /s")
+    ax.set_title(f"Ball displacement  |  v₀ = {v0} u/s,  decel = {a:.1f} u/s²")
     ax.legend()
     ax.grid(True, alpha=0.3)
     plt.tight_layout()

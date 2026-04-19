@@ -38,7 +38,7 @@ from miniball.ai import (
     TeamActions,
 )
 from miniball.config import (
-    BALL_DRAG,
+    BALL_DECEL,
     BALL_RADIUS,
     GAME_DURATION,
     PLAYER_RADIUS,
@@ -119,9 +119,12 @@ class Ball:
         self.x += self.vx * dt
         self.y += self.vy * dt
 
-        drag_factor = max(0.0, 1.0 - BALL_DRAG * dt)
-        self.vx *= drag_factor
-        self.vy *= drag_factor
+        speed = math.hypot(self.vx, self.vy)
+        if speed > 0.0:
+            new_speed = max(0.0, speed - BALL_DECEL * dt)
+            factor = new_speed / speed
+            self.vx *= factor
+            self.vy *= factor
 
         goal_lo = self._CENTRE_Y - STANDARD_GOAL_HEIGHT / 2
         goal_hi = self._CENTRE_Y + STANDARD_GOAL_HEIGHT / 2

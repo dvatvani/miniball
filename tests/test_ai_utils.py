@@ -8,7 +8,7 @@ from miniball.ai.interface import BallPathPoint, BallState, PlayerState
 from miniball.ai.utils import player_closest_to_point
 from miniball.geometry import OPPOSITION_GOAL_CENTER, dist, norm, relative_position
 from miniball.config import (
-    BALL_DRAG,
+    BALL_DECEL,
     BALL_RADIUS,
     PLAYER_SPEED,
     STANDARD_GOAL_HEIGHT,
@@ -232,12 +232,13 @@ def test_projected_position_no_velocity_stays_put():
     assert y == pytest.approx(50.0)
 
 
-def test_projected_position_matches_drag_formula():
-    """Verify against the continuous-drag formula directly."""
+def test_projected_position_matches_linear_decay_formula():
+    """Verify against the linear-deceleration formula directly."""
     ball = make_ball(60.0, 40.0, vx=10.0, vy=0.0)
-    t = 1.0
-    decay = math.exp(-BALL_DRAG * t)
-    factor = (1.0 - decay) / BALL_DRAG
+    t = 0.5  # well before stop time (10/BALL_DECEL = 1 s)
+    speed = 10.0
+    t_eff = min(t, speed / BALL_DECEL)
+    factor = t_eff - BALL_DECEL * t_eff * t_eff / (2.0 * speed)
     expected_x = 60.0 + 10.0 * factor
     x, y = ball.projected_position(t)
     assert x == pytest.approx(expected_x, rel=1e-6)
@@ -256,8 +257,9 @@ def test_projected_position_ball_decelerates():
 def test_projected_position_2d():
     ball = make_ball(50.0, 30.0, vx=6.0, vy=8.0)
     t = 0.5
-    decay = math.exp(-BALL_DRAG * t)
-    factor = (1.0 - decay) / BALL_DRAG
+    speed = math.hypot(6.0, 8.0)  # = 10.0
+    t_eff = min(t, speed / BALL_DECEL)
+    factor = t_eff - BALL_DECEL * t_eff * t_eff / (2.0 * speed)
     x, y = ball.projected_position(t)
     assert x == pytest.approx(50.0 + 6.0 * factor, rel=1e-6)
     assert y == pytest.approx(30.0 + 8.0 * factor, rel=1e-6)
@@ -277,7 +279,8 @@ def test_crossing_x_ball_already_at_target_returns_none():
 
 
 def test_crossing_x_returns_tuple():
-    ball = make_ball(60.0, 40.0, vx=10.0, vy=0.0)
+    # vx=30 gives rest_x = 60 + 30*30/20 = 105 > 80, so ball reaches the target.
+    ball = make_ball(60.0, 40.0, vx=30.0, vy=0.0)
     result = ball.position_when_crossing_x(80.0)
     assert result is not None
     assert isinstance(result, tuple)
@@ -286,6 +289,7 @@ def test_crossing_x_returns_tuple():
 
 def test_crossing_x_forward_moving_ball():
     """Ball moving right should end up near the target x."""
+    # vx=20 gives rest_x = 60 + 20*20/20 = 80, so ball just reaches x=80.
     ball = make_ball(60.0, 40.0, vx=20.0, vy=0.0)
     result = ball.position_when_crossing_x(80.0)
     assert result is not None
@@ -294,9 +298,17 @@ def test_crossing_x_forward_moving_ball():
     assert y == pytest.approx(40.0)
 
 
+def test_crossing_x_ball_stops_before_target_returns_none():
+    """Ball that decelerates to rest before reaching x returns None."""
+    # vx=10 gives rest_x = 60 + 10*10/20 = 65 < 80 — stops before reaching target.
+    ball = make_ball(60.0, 40.0, vx=10.0, vy=0.0)
+    assert ball.position_when_crossing_x(80.0) is None
+
+
 def test_crossing_x_with_lateral_velocity():
     """A ball with both vx and vy should deflect in y at the crossing point."""
-    ball = make_ball(60.0, 40.0, vx=10.0, vy=5.0)
+    # vx=25, vy=10 → speed≈26.9, rest_x = 60 + 25*26.9/20 ≈ 93.6 > 80.
+    ball = make_ball(60.0, 40.0, vx=25.0, vy=10.0)
     result = ball.position_when_crossing_x(80.0)
     assert result is not None
     _, y = result
@@ -341,23 +353,23 @@ def test_intercept_time_ball_moving_away_is_longer():
     assert t_receding > t_static
 
 
-def test_intercept_point_is_on_constant_velocity_trajectory():
-    """Intercept point equals the constant-velocity ball projection at intercept_time.
+def test_intercept_point_matches_linear_decay_trajectory():
+    """Intercept point equals the ball's linear-decay position at intercept_time.
 
-    Uses a player close enough to intercept while the ball is still moving
-    (not after it has stopped), so the constant-velocity path formula applies.
-    Ball speed √(5²+3²) ≈ 5.8 ≪ PLAYER_SPEED; player 10 units away → t_seg ≈ 1.5 s,
-    well within the ~7 s segment duration.
+    Ball moves toward the player so the intercept occurs while the ball is
+    still moving.  intercept_point must return the actual (decelerated) ball
+    position, not the constant-velocity projection used to solve for the time.
     """
     player = make_player(1, 50.0, 40.0)
-    ball = make_ball(60.0, 40.0, vx=5.0, vy=3.0)
+    # Fast ball heading left toward the player; stop time = 30/BALL_DECEL = 3 s,
+    # rest_x = 70 - 30*30/(2*BALL_DECEL) = 70 - 45 = 25 — inside pitch.
+    ball = make_ball(70.0, 40.0, vx=-30.0, vy=0.0)
     t = player.intercept_time(ball)
     px, py = player.intercept_point(ball)
-    # On the first (non-bouncing) segment seg.time = 0, so t_seg = t
-    expected_x = 60.0 + 5.0 * t
-    expected_y = 40.0 + 3.0 * t
-    assert px == pytest.approx(expected_x, rel=1e-4)
-    assert py == pytest.approx(expected_y, rel=1e-4)
+    # intercept_point must equal ball.projected_position(t) for a single-segment path
+    expected_x, expected_y = ball.projected_position(t)
+    assert px == pytest.approx(expected_x, abs=1e-3)
+    assert py == pytest.approx(expected_y, abs=1e-3)
 
 
 def test_intercept_point_reachable_in_intercept_time():
@@ -419,13 +431,15 @@ def test_fastest_interceptor_returns_closest_player_for_stationary_ball():
 def test_fastest_interceptor_accounts_for_ball_movement():
     """A moving ball may favour a player who is NOT the geometrically closest.
 
-    Ball speed (10) < PLAYER_SPEED (12) so the quadratic has valid roots.
-    near_player is just behind the ball (which is moving away); far_player is
-    directly ahead in the ball's path and intercepts it sooner.
+    Ball at (60,40) vx=10 stops at (65,40) after t=1s.
+    near_player is behind the ball and cannot catch it — walks to rest in 1.42s.
+    far_player is ahead in the ball's path and closer to the rest position — walks
+    to rest in 1.25s.  far_player wins despite near_player being geometrically
+    closer to the ball's current position.
     """
-    ball = make_ball(60.0, 40.0, vx=10.0)  # heading right, speed < PLAYER_SPEED
-    near_player = make_player(1, 58.0, 40.0)  # 2 units behind ball, ball moving away
-    far_player = make_player(2, 80.0, 40.0)  # 20 units ahead, in the ball's path
+    ball = make_ball(60.0, 40.0, vx=10.0)  # heading right, stops at x=65
+    near_player = make_player(1, 48.0, 40.0)  # 12 units behind ball, can't catch it
+    far_player = make_player(2, 80.0, 40.0)  # 20 units ahead, closer to rest position
     fastest = ball.fastest_interceptor([near_player, far_player])
     assert fastest.number == 2
 
@@ -486,7 +500,7 @@ def test_trace_path_stationary_ball_returns_single_point():
 
 def test_trace_path_ball_stops_inside_pitch():
     """Ball with moderate velocity stops without hitting any wall."""
-    # rest_x = 60 + 10/BALL_DRAG ≈ 77.2 — well inside [1, 119]
+    # rest_x = 60 + vx * speed / (2 * BALL_DECEL) = 60 + 10*10/20 = 65 — well inside [1, 119]
     ball = make_ball(60.0, 40.0, vx=10.0)
     path = ball.trace_path()
     assert len(path) == 2
@@ -495,16 +509,17 @@ def test_trace_path_ball_stops_inside_pitch():
     assert start.velocity == pytest.approx((10.0, 0.0))
     assert start.time == pytest.approx(0.0)
     assert stop.velocity == pytest.approx((0.0, 0.0), abs=1e-9)
-    assert stop.time > 0.0
-    # Stop x should be close to the mathematical rest position (ball still has
-    # speed _BALL_STOP_SPEED ≈ 0.1 at the stop point, so it's ~0.17 units short)
-    assert stop.location[0] == pytest.approx(60.0 + 10.0 / BALL_DRAG, abs=0.5)
-    assert stop.location[1] == pytest.approx(40.0, abs=1e-3)
+    assert stop.time == pytest.approx(10.0 / BALL_DECEL, rel=1e-6)  # exact stop time
+    # Stop x = x₀ + vx * t_stop / 2 = 60 + 10 * (10/10) / 2 = 65 (exact with linear decay)
+    assert stop.location[0] == pytest.approx(
+        60.0 + 10.0 * 10.0 / (2.0 * BALL_DECEL), rel=1e-6
+    )
+    assert stop.location[1] == pytest.approx(40.0, abs=1e-9)
 
 
 def test_trace_path_bounces_off_right_wall():
     """Ball heading right fast enough to hit the right boundary bounces back."""
-    # rest_x = 100 + 30/BALL_DRAG ≈ 151 — exceeds 119, so right-wall hit.
+    # rest_x = 100 + 30*30/(2*BALL_DECEL) = 145 — exceeds 119, so right-wall hit.
     # y=10 keeps the ball well outside the goal mouth [34, 46].
     ball = make_ball(100.0, 10.0, vx=30.0)
     path = ball.trace_path()
@@ -519,7 +534,7 @@ def test_trace_path_bounces_off_right_wall():
 
 def test_trace_path_bounces_off_top_wall():
     """Ball heading upward fast enough to hit the top boundary bounces back."""
-    # rest_y = 60 + 30/BALL_DRAG ≈ 111 — exceeds 79, so top-wall hit
+    # rest_y = 60 + 30*30/(2*BALL_DECEL) = 105 — exceeds 79, so top-wall hit
     ball = make_ball(60.0, 60.0, vy=30.0)
     path = ball.trace_path()
     assert len(path) == 3
@@ -591,8 +606,9 @@ def test_trace_path_diagonal_ball_hits_x_wall_first():
     occurs rather than a goal passage.
     """
     # Ball at (105, 10) moving right (vx=20) and upward (vy=5).
-    # rest_x ≈ 105 + 34 = 139 > 119; rest_y ≈ 10 + 8.6 = 18.6 < 79
-    # y at x-wall ≈ 13.5 — not in goal range → only x-wall is hit
+    # speed ≈ 20.6; rest_x ≈ 105 + 20*20.6/20 = 125.6 > 119 → x-wall hit
+    # rest_y ≈ 10 + 5*20.6/20 = 15.2 < 79 → no y-wall hit
+    # y at x-wall ≈ 13.2 — not in goal range [34, 46] → x-wall bounce occurs
     ball = make_ball(105.0, 10.0, vx=20.0, vy=5.0)
     path = ball.trace_path()
     assert len(path) == 3
@@ -606,7 +622,9 @@ def test_trace_path_diagonal_ball_hits_x_wall_first():
 def test_intercept_time_no_bounce_unchanged():
     """intercept_time is unchanged for a ball that stays inside the pitch."""
     player = make_player(1, 0.0, 40.0)
-    ball = make_ball(24.0, 40.0, vx=5.0)  # rest_x ≈ 33 — well inside pitch
+    ball = make_ball(
+        24.0, 40.0, vx=5.0
+    )  # rest_x = 24 + 5*5/20 = 25.25 — well inside pitch
     t = player.intercept_time(ball)
     assert math.isfinite(t)
     assert t > 0.0
@@ -618,7 +636,7 @@ def test_intercept_time_ball_bouncing_toward_player():
     y=10 keeps the shot outside the goal mouth [34, 46] so a real wall
     bounce occurs rather than the ball entering the goal.
     """
-    # rest_x ≈ 95+43 = 138 > 119 → bounces off right wall at y ≈ 10
+    # rest_x = 95 + 25*25/20 = 126.25 > 119 → bounces off right wall at y ≈ 10
     ball = make_ball(95.0, 10.0, vx=25.0)
     player = make_player(1, 40.0, 10.0)
     t = player.intercept_time(ball)
@@ -643,13 +661,13 @@ def test_intercept_point_after_bounce_reachable_in_intercept_time():
 def test_intercept_time_behind_ball_heading_to_opposite_wall():
     """Player waits near a wall; ball bounces toward them from the far side."""
     # Ball at centre heading right; player near right wall — ball arrives directly,
-    # no wait needed.  y=40 is fine here because rest_x ≈ 85.7 < 119 (no wall hit).
-    ball = make_ball(60.0, 40.0, vx=15.0)  # rest ≈ 85.7 — inside pitch
+    # no wait needed.  y=40 is fine here because rest_x = 60 + 15*15/20 = 71.25 < 119.
+    ball = make_ball(60.0, 40.0, vx=15.0)  # rest = 71.25 — inside pitch
     player = make_player(1, 80.0, 40.0)
     t_direct = player.intercept_time(ball)
 
     # Ball bouncing scenario: y=10 to keep shot outside goal mouth [34, 46].
-    ball2 = make_ball(90.0, 10.0, vx=25.0)  # bounces off right wall
+    ball2 = make_ball(90.0, 10.0, vx=25.0)  # rest_x = 90 + 25*25/20 = 121.25 → bounces
     player2 = make_player(1, 30.0, 10.0)
     t_bounce = player2.intercept_time(ball2)
 
@@ -658,23 +676,30 @@ def test_intercept_time_behind_ball_heading_to_opposite_wall():
 
 
 def test_intercept_point_on_post_bounce_segment_matches_ball_trajectory():
-    """Intercept point is consistent with constant-velocity projection on its segment."""
+    """Intercept point is the linear-decay ball position at intercept_time."""
     # y=10 so ball bounces off the right wall rather than entering the goal.
+    # Player at x=90 is to the left of the bounce point (x=119); the ball
+    # bounces back toward the player who intercepts it at ~t_seg=0.646s into
+    # the post-bounce segment (well within that segment's ~1.2s duration).
     ball = make_ball(95.0, 10.0, vx=25.0)
-    player = make_player(1, 50.0, 10.0)
+    player = make_player(1, 90.0, 10.0)
     path = ball.trace_path()
 
     t_total = player.intercept_time(ball)
     pt = player.intercept_point(ball)
 
-    # Find which segment the intercept falls in and verify
+    # Find which segment the intercept falls in and verify the point matches
+    # the actual linear-decay ball position at intercept_time.
     for i in range(len(path) - 1):
         seg = path[i]
         seg_end = path[i + 1]
         if seg.time <= t_total <= seg_end.time + 1e-9:
             t_seg = t_total - seg.time
-            expected_x = seg.location[0] + seg.velocity[0] * t_seg
-            expected_y = seg.location[1] + seg.velocity[1] * t_seg
+            seg_speed = math.hypot(*seg.velocity)
+            # Linear-decay position: pos + vel * (t - BALL_DECEL*t²/(2*speed))
+            f = t_seg - BALL_DECEL * t_seg * t_seg / (2.0 * seg_speed)
+            expected_x = seg.location[0] + seg.velocity[0] * f
+            expected_y = seg.location[1] + seg.velocity[1] * f
             assert pt[0] == pytest.approx(expected_x, abs=1e-3)
             assert pt[1] == pytest.approx(expected_y, abs=1e-3)
             break

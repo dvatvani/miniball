@@ -108,7 +108,7 @@ from collections.abc import Sequence
 from typing import NamedTuple, TypedDict
 
 from miniball.config import (
-    BALL_DRAG,
+    BALL_DECEL,
     BALL_RADIUS,
     PLAYER_SPEED,
     STANDARD_GOAL_HEIGHT,
@@ -117,8 +117,6 @@ from miniball.config import (
 )
 
 _PLAYER_SPEED_SQ: float = PLAYER_SPEED * PLAYER_SPEED
-# Ball speed (units/s) below which it is treated as effectively stopped
-_BALL_STOP_SPEED: float = 0.1
 
 # Effective pitch boundaries for the ball centre (keeps ball_radius from walls)
 _WALL_LEFT: float = BALL_RADIUS
@@ -131,15 +129,44 @@ _GOAL_LO: float = STANDARD_PITCH_HEIGHT / 2 - STANDARD_GOAL_HEIGHT / 2
 _GOAL_HI: float = STANDARD_PITCH_HEIGHT / 2 + STANDARD_GOAL_HEIGHT / 2
 
 
-def _time_to_wall(pos0: float, vel0: float, wall: float) -> float | None:
-    """Time for a 1-D coordinate to reach *wall* under linear drag.
+def _time_to_wall(vel: float, speed: float, delta: float) -> float | None:
+    """Time for the ball to travel *delta* units under constant deceleration.
 
-    Assumes *vel0* is moving toward *wall* (same sign as ``wall - pos0``).
-    Returns ``None`` when drag brings the ball to rest before it reaches the
-    wall (i.e. the maximum displacement ``vel0 / BALL_DRAG`` falls short).
+    *vel* is the velocity component in the direction of *delta* (same sign);
+    *speed* is the current ball speed (magnitude of the full velocity vector);
+    *delta* is the signed displacement to the target (``wall - pos``).
+
+    Returns ``None`` when the ball decelerates to rest before covering *delta*.
+
+    Under linear decay the ball's position satisfies:
+        pos(t) = pos₀ + vel·t − (vel/speed)·(BALL_DECEL/2)·t²
+
+    Setting pos(t) = wall gives the quadratic:
+        A·t² + B·t + C = 0
+        A = BALL_DECEL·vel / (2·speed)
+        B = −vel
+        C = delta
+
+    The smaller positive root is the first crossing time.
     """
-    arg = 1.0 - (wall - pos0) * BALL_DRAG / vel0
-    return -math.log(arg) / BALL_DRAG if arg > 0.0 else None
+    # Maximum displacement in this direction before the ball stops.
+    max_disp = vel * speed / (2.0 * BALL_DECEL)
+    if abs(delta) > abs(max_disp):
+        return None  # ball decelerates to rest before reaching the target
+
+    A = BALL_DECEL * vel / (2.0 * speed)
+    B = -vel
+    C = delta
+    disc = B * B - 4.0 * A * C
+    if disc < 0.0:
+        return (
+            None  # floating-point safety; should not occur when max_disp check passed
+        )
+    sqrt_disc = math.sqrt(disc)
+    t1 = (-B - sqrt_disc) / (2.0 * A)
+    t2 = (-B + sqrt_disc) / (2.0 * A)
+    positives = [t for t in (t1, t2) if t >= 0.0]
+    return min(positives) if positives else None
 
 
 def _segment_intercept_t(
@@ -153,25 +180,28 @@ def _segment_intercept_t(
 ) -> float | None:
     """Smallest non-negative segment-local time at which a player can intercept the ball.
 
-    Solves the generalised quadratic arising when the ball segment starts at
-    cumulative time *seg_t0* rather than zero:
+    The ball moves under linear deceleration within the segment:
 
-        |seg_loc + seg_vel·t_seg − player|² = PLAYER_SPEED² · (seg_t0 + t_seg)²
+        ball(t) = seg_loc + seg_vel · (t − c·t²)
+        c = BALL_DECEL / (2 · seg_speed)
 
-    Expanding and rearranging:
+    The interception condition is:
 
-        A·t² + B·t + C = 0
-        A = |V|²  − PLAYER_SPEED²
-        B = 2·(d·V − PLAYER_SPEED²·seg_t0)   (d = seg_loc − player)
-        C = |d|²  − PLAYER_SPEED²·seg_t0²
+        |ball(t) − player|² = PLAYER_SPEED² · (seg_t0 + t)²
 
-    When *seg_t0 = 0* this reduces to the original single-segment quadratic.
+    Substituting ball(t) gives a quartic in t.  The constant-velocity
+    quadratic (c=0) provides an initial estimate, then Newton–Raphson
+    iterations refine it to the exact solution:
+
+        f(t)  = |ball(t) − player|² − Vp²·(seg_t0+t)²
+        f′(t) = 2·(ball(t)−player)·V·(1−2·c·t) − 2·Vp²·(seg_t0+t)
 
     Returns ``None`` when no non-negative solution exists.
     """
     dx = seg_lx - px
     dy = seg_ly - py
 
+    # ── Step 1: constant-velocity quadratic for initial estimate ──────────
     A = seg_vx * seg_vx + seg_vy * seg_vy - _PLAYER_SPEED_SQ
     B = 2.0 * (dx * seg_vx + dy * seg_vy - _PLAYER_SPEED_SQ * seg_t0)
     C = dx * dx + dy * dy - _PLAYER_SPEED_SQ * seg_t0 * seg_t0
@@ -185,16 +215,41 @@ def _segment_intercept_t(
         if abs(B) < 1e-9:
             return None
         t = -C / B
-        return t if t >= 0.0 else None
+    else:
+        disc = B * B - 4.0 * A * C
+        if disc < 0.0:
+            return None
+        sqrt_disc = math.sqrt(disc)
+        t1 = (-B - sqrt_disc) / (2.0 * A)
+        t2 = (-B + sqrt_disc) / (2.0 * A)
+        positives = [t for t in (t1, t2) if t >= 0.0]
+        if not positives:
+            return None
+        t = min(positives)
 
-    disc = B * B - 4.0 * A * C
-    if disc < 0.0:
-        return None
-    sqrt_disc = math.sqrt(disc)
-    t1 = (-B - sqrt_disc) / (2.0 * A)
-    t2 = (-B + sqrt_disc) / (2.0 * A)
-    positives = [t for t in (t1, t2) if t >= 0.0]
-    return min(positives) if positives else None
+    # ── Step 2: Newton–Raphson refinement for exact linear-decay solution ─
+    seg_speed = math.hypot(seg_vx, seg_vy)
+    if seg_speed > 1e-9:
+        c = BALL_DECEL / (2.0 * seg_speed)
+        for _ in range(8):
+            u = t - c * t * t  # displacement factor: t_eff for this segment
+            ball_dx = dx + seg_vx * u
+            ball_dy = dy + seg_vy * u
+            T = seg_t0 + t
+            f = ball_dx * ball_dx + ball_dy * ball_dy - _PLAYER_SPEED_SQ * T * T
+            du_dt = 1.0 - 2.0 * c * t
+            fp = (
+                2.0 * (ball_dx * seg_vx + ball_dy * seg_vy) * du_dt
+                - 2.0 * _PLAYER_SPEED_SQ * T
+            )
+            if abs(fp) < 1e-12:
+                break
+            dt = f / fp
+            t -= dt
+            if abs(dt) < 1e-10:
+                break
+
+    return t if t >= 0.0 else None
 
 
 # ── State classes ─────────────────────────────────────────────────────────────
@@ -268,10 +323,10 @@ class PlayerState:
     def intercept_time(self, ball: BallState) -> float:
         """Minimum time (seconds) until this player can reach the ball.
 
-        Uses a constant-velocity approximation within each segment of the
-        ball's traced path (see :meth:`BallState.trace_path`).  Wall bounces
-        are handled by iterating over segments in order and solving the
-        generalised quadratic for each one:
+        Iterates over segments of the ball's traced path (see
+        :meth:`BallState.trace_path`).  Within each segment the ball is
+        approximated as moving at the segment's initial velocity (constant-
+        velocity assumption), giving the quadratic intercept equation:
 
             A·t² + B·t + C = 0
             A = |V|²  − PLAYER_SPEED²
@@ -279,8 +334,8 @@ class PlayerState:
             C = |d|²  − PLAYER_SPEED²·t₀²
 
         The first segment whose solution lies within the segment's duration
-        determines the intercept.  If the ball is stopped before the player
-        arrives, the time to walk to the stopped position is returned instead.
+        determines the intercept.  If the ball has stopped before the player
+        arrives, the time to walk to the rest position is returned instead.
         """
         px, py = self.location
         path = ball.trace_path()
@@ -321,7 +376,13 @@ class PlayerState:
 
             t_seg = _segment_intercept_t(px, py, lx, ly, vx, vy, seg.time)
             if t_seg is not None and t_seg <= seg_duration + 1e-9:
-                return (lx + vx * t_seg, ly + vy * t_seg)
+                # Return the actual linear-decay ball position at t_seg, not the
+                # constant-velocity projection used to solve for t_seg.
+                seg_speed = math.hypot(vx, vy)
+                if seg_speed > 1e-9:
+                    f = t_seg - BALL_DECEL * t_seg * t_seg / (2.0 * seg_speed)
+                    return (lx + vx * f, ly + vy * f)
+                return (lx, ly)
 
         return path[-1].location
 
@@ -413,20 +474,24 @@ class BallState:
     def projected_position(self, t: float) -> tuple[float, float]:
         """Project the ball's position after ``t`` seconds.
 
-        Uses a continuous-drag approximation of the game engine's per-frame
-        linear drag model:
+        Uses the game engine's linear-deceleration model:
 
-            v(t) ≈ v₀ · exp(−BALL_DRAG · t)
-            x(t) = x₀ + v₀/BALL_DRAG · (1 − exp(−BALL_DRAG · t))
+            speed(t) = max(0, speed₀ − BALL_DECEL · t)
+            pos(t)   = pos₀ + vel₀ · (t_eff − BALL_DECEL · t_eff² / (2 · speed₀))
 
-        Ignores pitch boundaries and possession changes — accurate for
-        short look-aheads (< 1 s) on an open pitch.  Negative ``t``
+        where ``t_eff = min(t, t_stop)`` and ``t_stop = speed₀ / BALL_DECEL``.
+
+        Ignores pitch boundaries and possession changes.  Negative ``t``
         returns the current position unchanged.
         """
-        if t <= 0.0 or BALL_DRAG <= 0.0:
+        if t <= 0.0:
             return self.location
-        decay = math.exp(-BALL_DRAG * t)
-        factor = (1.0 - decay) / BALL_DRAG
+        speed = math.hypot(self.velocity[0], self.velocity[1])
+        if speed <= 0.0:
+            return self.location
+        t_stop = speed / BALL_DECEL
+        t_eff = min(t, t_stop)
+        factor = t_eff - BALL_DECEL * t_eff * t_eff / (2.0 * speed)
         return (
             self.location[0] + self.velocity[0] * factor,
             self.location[1] + self.velocity[1] * factor,
@@ -435,15 +500,25 @@ class BallState:
     def position_when_crossing_x(self, x: float) -> tuple[float, float] | None:
         """Project the ball's position when it first crosses ``x``.
 
-        Returns ``None`` if the ball is stationary in x or already at ``x``.
+        Returns ``None`` if the ball is stationary in x, already at ``x``, not
+        moving toward ``x``, or decelerates to rest before reaching ``x``.
         """
-        if abs(self.velocity[0]) < 1e-6 or abs(x - self.location[0]) < 1e-6:
+        vx = self.velocity[0]
+        if abs(vx) < 1e-6:
             return None
-        t = (x - self.location[0]) / self.velocity[0]
+        delta = x - self.location[0]
+        if abs(delta) < 1e-6:
+            return None
+        if (vx > 0.0) != (delta > 0.0):
+            return None  # ball moving away from x
+        speed = math.hypot(vx, self.velocity[1])
+        t = _time_to_wall(vx, speed, delta)
+        if t is None:
+            return None  # ball stops before reaching x
         return self.projected_position(t)
 
     def trace_path(self, max_bounces: int = 10) -> list[BallPathPoint]:
-        """Trace the ball's full path under drag, including wall bounces.
+        """Trace the ball's full path under linear deceleration, including wall bounces.
 
         Returns a list of :class:`BallPathPoint` waypoints::
 
@@ -451,23 +526,24 @@ class BallState:
 
         * **start** — the ball's current position and velocity (``time = 0``).
         * **bounce** — position and *post-bounce* velocity at each wall collision.
-        * **stop** — where the ball effectively comes to rest (speed below
-          ``_BALL_STOP_SPEED``); velocity is ``(0.0, 0.0)``.
+        * **stop** — where the ball comes to rest exactly (speed reaches zero);
+          velocity is ``(0.0, 0.0)``.
 
-        Each waypoint's ``time`` is the cumulative seconds from *now*.
+        Each waypoint's ``time`` is the cumulative seconds from *now*.  Wall-hit
+        times are computed exactly via the quadratic formula (no approximation).
 
         The list always contains at least two entries (start + stop), even for
-        a stationary or very slow ball.
+        a stationary ball (in that case both entries are the same point).
 
         Bounce reflection rules:
-        * Left / right wall  → x-velocity is negated.
-        * Top / bottom wall  → y-velocity is negated.
+        * Left / right wall  → x-velocity is negated; deceleration continues.
+        * Top / bottom wall  → y-velocity is negated; deceleration continues.
         * Goal openings      → no bounce; the trace stops and the final waypoint
-          is placed at the ball's drag-model rest position (which will overshoot
-          the goal line — this is intentional).
+          is placed at the ball's rest position (which will overshoot the goal
+          line — this is intentional).
 
         *max_bounces* caps the number of wall reflections computed (default 10)
-        as a safety limit; in practice a ball will decelerate to near-rest long
+        as a safety limit; in practice a ball will decelerate to rest long
         before this.
         """
         x, y = self.location
@@ -478,25 +554,24 @@ class BallState:
 
         for _ in range(max_bounces):
             speed = math.hypot(vx, vy)
-            if speed < _BALL_STOP_SPEED:
-                # Already effectively stopped; path ends at current point.
+            if speed < 1e-9:
+                # Already stopped; path ends at current point.
                 break
 
-            # Rest position under drag: x₀ + vx/k (as t → ∞)
-            rest_x = x + vx / BALL_DRAG
-            rest_y = y + vy / BALL_DRAG
+            # Exact stop time and rest position under constant deceleration.
+            t_stop = speed / BALL_DECEL
+            # rest = pos + vel * t_stop / 2  (average velocity over the deceleration)
+            rest_x = x + vx * t_stop / 2.0
+            rest_y = y + vy * t_stop / 2.0
 
             if (
                 _WALL_LEFT <= rest_x <= _WALL_RIGHT
                 and _WALL_BOTTOM <= rest_y <= _WALL_TOP
             ):
-                # Ball decelerates to rest inside the pitch — append stop point.
-                t_stop = math.log(speed / _BALL_STOP_SPEED) / BALL_DRAG
-                decay = math.exp(-BALL_DRAG * t_stop)
-                factor = (1.0 - decay) / BALL_DRAG
+                # Ball decelerates to rest inside the pitch — append exact stop point.
                 path.append(
                     BallPathPoint(
-                        (x + vx * factor, y + vy * factor),
+                        (rest_x, rest_y),
                         (0.0, 0.0),
                         t_cum + t_stop,
                     )
@@ -504,13 +579,14 @@ class BallState:
                 return path
 
             # Find time to the relevant wall in each axis (only when moving toward it).
+            # _time_to_wall(vel, speed, delta) solves the quadratic for constant decel.
             t_x_raw = (
-                _time_to_wall(x, vx, _WALL_RIGHT if vx > 0.0 else _WALL_LEFT)
+                _time_to_wall(vx, speed, (_WALL_RIGHT if vx > 0.0 else _WALL_LEFT) - x)
                 if abs(vx) > 1e-9
                 else None
             )
             t_y = (
-                _time_to_wall(y, vy, _WALL_TOP if vy > 0.0 else _WALL_BOTTOM)
+                _time_to_wall(vy, speed, (_WALL_TOP if vy > 0.0 else _WALL_BOTTOM) - y)
                 if abs(vy) > 1e-9
                 else None
             )
@@ -519,13 +595,12 @@ class BallState:
             # Compute the ball's y at the moment it reaches the left/right wall.
             # If that y falls in the goal mouth and the ball gets there before any
             # y-wall hit, stop tracing (no bounce off a goal); the fallback below
-            # will append the drag-model rest point behind the goal line.
+            # will append the rest point behind the goal line.
             # If a y-wall hit comes first, skip the x-wall this iteration so the
             # y-bounce is processed; the goal check repeats on the next pass.
             t_x = t_x_raw
             if t_x_raw is not None:
-                decay_x = math.exp(-BALL_DRAG * t_x_raw)
-                factor_x = (1.0 - decay_x) / BALL_DRAG
+                factor_x = t_x_raw - BALL_DECEL * t_x_raw * t_x_raw / (2.0 * speed)
                 y_at_x_wall = y + vy * factor_x
                 if _GOAL_LO <= y_at_x_wall <= _GOAL_HI:
                     if t_y is None or t_x_raw <= t_y:
@@ -535,7 +610,7 @@ class BallState:
                     t_x = None
 
             if t_x is None and t_y is None:
-                # Neither wall reachable under drag (shouldn't happen when rest is outside).
+                # Neither wall reachable (shouldn't happen when rest is outside pitch).
                 break
 
             # Take the earliest wall hit; prefer x-wall on tie.
@@ -548,30 +623,29 @@ class BallState:
                 assert t_y is not None
                 t_hit, hit_x_wall = t_y, False
 
-            decay = math.exp(-BALL_DRAG * t_hit)
-            factor = (1.0 - decay) / BALL_DRAG
+            # Ball position and speed at the wall hit.
+            factor = t_hit - BALL_DECEL * t_hit * t_hit / (2.0 * speed)
             new_x = x + vx * factor
             new_y = y + vy * factor
+            v_ratio = (speed - BALL_DECEL * t_hit) / speed  # speed fraction remaining
 
             if hit_x_wall:
-                new_vx, new_vy = -vx * decay, vy * decay
+                new_vx, new_vy = -vx * v_ratio, vy * v_ratio
             else:
-                new_vx, new_vy = vx * decay, -vy * decay
+                new_vx, new_vy = vx * v_ratio, -vy * v_ratio
 
             t_cum += t_hit
             x, y = new_x, new_y
             vx, vy = new_vx, new_vy
             path.append(BallPathPoint((x, y), (vx, vy), t_cum))
 
-        # Safety fallback: ball still moving after max_bounces — append stop estimate.
+        # Safety fallback: ball still moving after max_bounces — append exact stop.
         speed = math.hypot(vx, vy)
-        if speed >= _BALL_STOP_SPEED:
-            t_stop = math.log(speed / _BALL_STOP_SPEED) / BALL_DRAG
-            decay = math.exp(-BALL_DRAG * t_stop)
-            factor = (1.0 - decay) / BALL_DRAG
+        if speed > 1e-9:
+            t_stop = speed / BALL_DECEL
             path.append(
                 BallPathPoint(
-                    (x + vx * factor, y + vy * factor),
+                    (x + vx * t_stop / 2.0, y + vy * t_stop / 2.0),
                     (0.0, 0.0),
                     t_cum + t_stop,
                 )

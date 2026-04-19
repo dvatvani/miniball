@@ -12,8 +12,10 @@ STANDARD_GOAL_DEPTH = 4  # how far the goal box extends behind the goal line
 PLAYER_RADIUS = 2.0
 BALL_RADIUS = 1.0
 PLAYER_SPEED = 12  # normalised units / s
-BALL_DRAG = 0.45  # drag coefficient (1/s): v *= (1 − BALL_DRAG · dt) each frame
-STRIKE_SPEED = 45  # normalised units / s on a strike
+BALL_DECEL = (
+    9.0  # deceleration (units/s²): speed decreases by BALL_DECEL · dt each frame
+)
+STRIKE_SPEED = 40  # normalised units / s on a strike
 GAME_DURATION = 120.0  # seconds per half (full game = one period)
 TACKLE_COOLDOWN = 1.0  # seconds unable to gain the ball after being tackled
 STRIKE_COOLDOWN = 1.0  # seconds before the kicker can engage with the ball again
