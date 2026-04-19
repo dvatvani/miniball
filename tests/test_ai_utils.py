@@ -574,8 +574,13 @@ def test_trace_path_times_are_strictly_increasing():
 
 
 def test_trace_path_all_points_within_pitch_bounds():
-    """Every waypoint location must lie within valid pitch boundaries."""
-    ball = make_ball(60.0, 40.0, vx=50.0, vy=45.0)
+    """Every waypoint location must lie within valid pitch boundaries.
+
+    Use a starting y outside the goal mouth [34, 46] so wall bounces never
+    lead into a goal: ``trace_path`` intentionally places the final waypoint
+    past the goal line when a goal is scored (see interface docs).
+    """
+    ball = make_ball(60.0, 20.0, vx=50.0, vy=45.0)
     path = ball.trace_path()
     for pt in path:
         assert _LEFT_WALL - 0.1 <= pt.location[0] <= _RIGHT_WALL + 0.1
