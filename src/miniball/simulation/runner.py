@@ -24,6 +24,7 @@ class MatchResult:
     away_team: str
     home_goals: int
     away_goals: int
+    filename: str | None = None
 
 
 def _df_to_match_result(df: pl.DataFrame) -> MatchResult:
@@ -54,9 +55,10 @@ def _simulate_match(
     df = sim.simulate_match()
     assert df is not None, "match DataFrame should be populated after game over"
 
-    if save_data:
-        write_parquet(df, home_team.name, away_team.name, verbose=False)
     match_result = _df_to_match_result(df)
+    if save_data:
+        path = write_parquet(df, home_team.name, away_team.name, verbose=False)
+        match_result.filename = str(path)
     return match_result
 
 
