@@ -289,8 +289,8 @@ def test_crossing_x_returns_tuple():
 
 def test_crossing_x_forward_moving_ball():
     """Ball moving right should end up near the target x."""
-    # vx=20 gives rest_x = 60 + 20*20/20 = 80, so ball just reaches x=80.
-    ball = make_ball(60.0, 40.0, vx=20.0, vy=0.0)
+    # With BALL_DECEL=10.5, 2*BALL_DECEL=21, so vx=21 gives rest_x = 60 + 21²/21 = 81 > 80.
+    ball = make_ball(60.0, 40.0, vx=21.0, vy=0.0)
     result = ball.position_when_crossing_x(80.0)
     assert result is not None
     x, y = result

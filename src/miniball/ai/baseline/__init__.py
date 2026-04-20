@@ -11,7 +11,7 @@ from miniball.config import (
     STANDARD_GOAL_HEIGHT,
     STANDARD_PITCH_HEIGHT,
     STANDARD_PITCH_WIDTH,
-    STRIKE_SPEED,
+    MAX_STRIKE_SPEED,
 )
 from miniball.geometry import OPPOSITION_GOAL_CENTER, dist
 
@@ -49,7 +49,7 @@ class BaselineAI(BaseAI):
     PRESSURE_RANGE: float = 10.0
     COVERAGE_FRACTION: float = 0.9
     PASSING_LANE_ANGLE: float = abs(
-        math.atan2(PLAYER_SPEED * 1.2, STRIKE_SPEED / 2)
+        math.atan2(PLAYER_SPEED * 1.2, MAX_STRIKE_SPEED * 0.5)
     )  # angle for pass lane check
     _VORONOI_GRID_STEP: float = 5.0  # pitch units between grid sample points
 

@@ -11,6 +11,12 @@ from enum import Enum, auto
 
 import arcade
 
+from miniball.config import (
+    STRIKE_WEIGHT_CIRCLE,
+    STRIKE_WEIGHT_CROSS,
+    STRIKE_WEIGHT_SQUARE,
+    STRIKE_WEIGHT_TRIANGLE,
+)
 from miniball.ui.config import JOY_DEAD_ZONE
 
 
@@ -25,9 +31,14 @@ class Action(Enum):
     BACK = auto()
 
 
-# PlayStation mapping: X = button 1, Circle = button 2
-_BTN_CONFIRM = 1
-_BTN_BACK = 2
+# PlayStation button indices
+_BTN_SQUARE = 0
+_BTN_X = 1  # also used as menu confirm
+_BTN_CIRCLE = 2  # also used as menu back
+_BTN_TRIANGLE = 3
+
+_BTN_CONFIRM = _BTN_X
+_BTN_BACK = _BTN_CIRCLE
 
 _STICK_THRESHOLD = 0.5
 
@@ -153,12 +164,33 @@ def get_move_vector(keys: set[int], joystick: object | None) -> tuple[float, flo
     return dx, dy
 
 
-def is_strike_pressed(keys: set[int], joystick: object | None) -> bool:
-    """Return True when the strike button is currently held."""
-    if arcade.key.SPACE in keys:
-        return True
+def get_strike_weight(keys: set[int], joystick: object | None) -> float | None:
+    """Return the strike weight if any strike button is held, else None.
+
+    Joystick buttons take priority over keyboard.  Button-to-weight mapping:
+      Square (btn 0) → STRIKE_WEIGHT_SQUARE  /  keyboard Q
+      X     (btn 1) → STRIKE_WEIGHT_X        /  keyboard Space
+      Circle(btn 2) → STRIKE_WEIGHT_CIRCLE   /  keyboard E
+      Triangle(btn3)→ STRIKE_WEIGHT_TRIANGLE /  keyboard W
+    """
     if joystick is not None:
         buttons = getattr(joystick, "buttons", None)
-        if buttons and len(buttons) > _BTN_CONFIRM:
-            return bool(buttons[_BTN_CONFIRM])
-    return False
+        if buttons:
+            if len(buttons) > _BTN_SQUARE and buttons[_BTN_SQUARE]:
+                return STRIKE_WEIGHT_SQUARE
+            if len(buttons) > _BTN_X and buttons[_BTN_X]:
+                return STRIKE_WEIGHT_CROSS
+            if len(buttons) > _BTN_CIRCLE and buttons[_BTN_CIRCLE]:
+                return STRIKE_WEIGHT_CIRCLE
+            if len(buttons) > _BTN_TRIANGLE and buttons[_BTN_TRIANGLE]:
+                return STRIKE_WEIGHT_TRIANGLE
+    # Keyboard fallbacks
+    if arcade.key.Q in keys:
+        return STRIKE_WEIGHT_SQUARE
+    if arcade.key.SPACE in keys:
+        return STRIKE_WEIGHT_CROSS
+    if arcade.key.E in keys:
+        return STRIKE_WEIGHT_CIRCLE
+    if arcade.key.W in keys:
+        return STRIKE_WEIGHT_TRIANGLE
+    return None

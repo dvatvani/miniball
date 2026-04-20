@@ -41,15 +41,16 @@ from miniball.config import (
     BALL_DECEL,
     BALL_RADIUS,
     GAME_DURATION,
+    MAX_STRIKE_SPEED,
     PLAYER_RADIUS,
     PLAYER_SPEED,
     STANDARD_GOAL_DEPTH,
     STANDARD_GOAL_HEIGHT,
     STANDARD_PITCH_HEIGHT,
     STANDARD_PITCH_WIDTH,
-    STRIKE_ANGULAR_ERROR_DEGREES,
+    STRIKE_ANGULAR_ERROR_DEGREES_FN,
     STRIKE_COOLDOWN,
-    STRIKE_SPEED,
+    STRIKE_WEIGHT_CROSS,
     TACKLE_COOLDOWN,
 )
 from miniball.coords import (
@@ -78,6 +79,7 @@ class HumanInput:
     player_number: int
     direction: tuple[float, float]
     strike: bool
+    strike_weight: float = STRIKE_WEIGHT_CROSS
 
 
 # ── Entities ──────────────────────────────────────────────────────────────────
@@ -423,6 +425,7 @@ class MatchSimulation:
             actions[human_input.player_number] = {
                 "direction": (dx, dy),
                 "strike": human_input.strike,
+                "strike_weight": human_input.strike_weight,
             }
 
         return actions
@@ -511,22 +514,34 @@ class MatchSimulation:
                 p.y += dy * scale
                 p.facing = math.atan2(dy, dx)
             if player_action["strike"]:
-                self._handle_strike(p)
+                self._handle_strike(
+                    p, player_action.get("strike_weight", STRIKE_WEIGHT_CROSS)
+                )
 
     # ── Physics helpers ───────────────────────────────────────────────────────
 
-    def _handle_strike(self, player: Player) -> None:
-        """Launch the ball in ``player``'s facing direction with angular error."""
+    def _handle_strike(
+        self, player: Player, weight: float = STRIKE_WEIGHT_CROSS
+    ) -> None:
+        """Launch the ball in ``player``'s facing direction with angular error.
+
+        ``weight`` is clamped to [0.01, 1.0]; strike speed and angular error
+        both scale with it relative to MAX_STRIKE_SPEED.
+        """
         if self.ball.possessed_by is not player:
             return
+        weight = max(0.01, min(1.0, weight))
         self.ball.possessed_by = None
-        error_rad = math.radians(STRIKE_ANGULAR_ERROR_DEGREES)
+        error_rad = math.radians(STRIKE_ANGULAR_ERROR_DEGREES_FN(weight))
         angle = player.facing + random.uniform(-error_rad, error_rad)
         separation = PLAYER_RADIUS + BALL_RADIUS + 0.24
         self.ball.x = player.x + math.cos(angle) * separation
         self.ball.y = player.y + math.sin(angle) * separation
-        self.ball.vx = math.cos(angle) * STRIKE_SPEED
-        self.ball.vy = math.sin(angle) * STRIKE_SPEED
+        # weight is a linear range fraction: range = weight * max_range
+        # ⟹ v = sqrt(weight) * MAX_STRIKE_SPEED (from range = v²/2a)
+        speed = MAX_STRIKE_SPEED * math.sqrt(weight)
+        self.ball.vx = math.cos(angle) * speed
+        self.ball.vy = math.sin(angle) * speed
         player.cooldown_timer = max(player.cooldown_timer, STRIKE_COOLDOWN)
 
     def _pickup_loose_ball(self) -> None:

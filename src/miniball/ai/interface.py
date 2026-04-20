@@ -105,7 +105,7 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import NamedTuple, TypedDict
+from typing import NamedTuple, NotRequired, TypedDict
 
 from miniball.config import (
     BALL_DECEL,
@@ -877,6 +877,9 @@ class PlayerAction(TypedDict):
         float, float
     ]  # (dx, dy) in standard pitch coords; magnitude = speed fraction (0–1)
     strike: bool  # request to strike the ball; only meaningful for the player who has the ball
+    strike_weight: NotRequired[
+        float
+    ]  # optional weight in [0.01, 1.0]; defaults to 0.5 if omitted
 
 
 TeamActions = dict[

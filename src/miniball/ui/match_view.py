@@ -8,11 +8,17 @@ from typing import Literal
 import arcade
 
 from miniball.config import (
+    BALL_DECEL,
+    MAX_STRIKE_SPEED,
     PLAYER_RADIUS,
     STANDARD_PITCH_HEIGHT,
     STANDARD_PITCH_WIDTH,
-    STRIKE_ANGULAR_ERROR_DEGREES,
+    STRIKE_ANGULAR_ERROR_DEGREES_FN,
     STRIKE_COOLDOWN,
+    STRIKE_WEIGHT_CIRCLE,
+    STRIKE_WEIGHT_CROSS,
+    STRIKE_WEIGHT_SQUARE,
+    STRIKE_WEIGHT_TRIANGLE,
     TACKLE_COOLDOWN,
 )
 from miniball.simulation.engine import HumanInput, MatchSimulation, Player
@@ -38,7 +44,7 @@ from miniball.ui.config import (
     SCREEN_W,
 )
 from miniball.ui.coords import global_to_screen
-from miniball.ui.input import get_move_vector, is_strike_pressed
+from miniball.ui.input import get_move_vector, get_strike_weight
 from miniball.ui.pitch import draw_pitch
 
 # Main-pitch pixel dimensions (used by draw_pitch)
@@ -155,12 +161,11 @@ class MatchView(arcade.View):
         )
 
     def _draw_aim_arc(self, p: Player) -> None:
-        error_rad = math.radians(STRIKE_ANGULAR_ERROR_DEGREES)
         gx = p.x + math.cos(p.facing) * PLAYER_RADIUS
         gy = p.y + math.sin(p.facing) * PLAYER_RADIUS
 
-        def ray_t(angle: float) -> float:
-            """Return the distance to the pitch boundary along ``angle`` from (gx, gy)."""
+        def ray_t(angle: float, max_range: float) -> float:
+            """Distance to pitch boundary or max_range along ``angle`` from (gx, gy)."""
             dx = math.cos(angle)
             dy = math.sin(angle)
             candidates: list[float] = []
@@ -169,32 +174,48 @@ class MatchView(arcade.View):
             if abs(dy) > 1e-9:
                 candidates.append(((STANDARD_PITCH_HEIGHT if dy > 0 else 0) - gy) / dy)
             valid = [tc for tc in candidates if tc > 1e-9]
-            return min(valid) if valid else 0.0
+            boundary_t = min(valid) if valid else 0.0
+            return min(boundary_t, max_range)
 
-        angle_lo = p.facing - error_rad
-        angle_hi = p.facing + error_rad
+        def draw_single_arc(
+            weight: float,
+            fill_color: tuple[int, int, int, int],
+            line_color: tuple[int, int, int, int],
+        ) -> None:
+            error_rad = math.radians(STRIKE_ANGULAR_ERROR_DEGREES_FN(weight))
+            # weight is a linear range fraction: range = weight * max_range
+            max_range = weight * MAX_STRIKE_SPEED**2 / (2 * BALL_DECEL)
+            angle_lo = p.facing - error_rad
+            angle_hi = p.facing + error_rad
 
-        # Build a fan polygon: apex at player edge, boundary swept across N steps
-        n_steps = 16
-        start_sx, start_sy = global_to_screen(gx, gy)
-        points: list[tuple[float, float]] = [(start_sx, start_sy)]
-        for i in range(n_steps + 1):
-            angle = angle_lo + (angle_hi - angle_lo) * i / n_steps
-            t = ray_t(angle)
-            sx, sy = global_to_screen(
-                gx + math.cos(angle) * t, gy + math.sin(angle) * t
+            n_steps = 16
+            start_sx, start_sy = global_to_screen(gx, gy)
+            points: list[tuple[float, float]] = [(start_sx, start_sy)]
+            for i in range(n_steps + 1):
+                angle = angle_lo + (angle_hi - angle_lo) * i / n_steps
+                t = ray_t(angle, max_range)
+                sx, sy = global_to_screen(
+                    gx + math.cos(angle) * t, gy + math.sin(angle) * t
+                )
+                points.append((sx, sy))
+            arcade.draw_polygon_filled(points, fill_color)
+
+            t_centre = ray_t(p.facing, max_range)
+            end_sx, end_sy = global_to_screen(
+                gx + math.cos(p.facing) * t_centre,
+                gy + math.sin(p.facing) * t_centre,
             )
-            points.append((sx, sy))
+            arcade.draw_line(start_sx, start_sy, end_sx, end_sy, line_color, 2)
 
-        arcade.draw_polygon_filled(points, (255, 255, 255, 10))
-
-        # Centre aim line
-        t_centre = ray_t(p.facing)
-        end_sx, end_sy = global_to_screen(
-            gx + math.cos(p.facing) * t_centre,
-            gy + math.sin(p.facing) * t_centre,
-        )
-        arcade.draw_line(start_sx, start_sy, end_sx, end_sy, (255, 255, 255, 50), 2)
+        # Draw heaviest first so lighter arcs render on top
+        # Square (full power) — PS4 pink
+        draw_single_arc(STRIKE_WEIGHT_SQUARE, (220, 50, 150, 20), (220, 50, 150, 90))
+        # Cross (balanced) — PS4 blue
+        draw_single_arc(STRIKE_WEIGHT_CROSS, (50, 100, 210, 20), (50, 100, 210, 100))
+        # Circle (light) — PS4 red
+        draw_single_arc(STRIKE_WEIGHT_CIRCLE, (220, 40, 40, 20), (220, 40, 40, 90))
+        # Triangle (tap) — PS4 green
+        draw_single_arc(STRIKE_WEIGHT_TRIANGLE, (50, 190, 90, 20), (50, 190, 90, 90))
 
     def _draw_hud(self) -> None:
         secs = max(0.0, self.sim.time_remaining)
@@ -222,7 +243,7 @@ class MatchView(arcade.View):
             bold=True,
         )
         arcade.draw_text(
-            "Arrows / L-stick to move and aim · Space / X to strike · R-stick to switch controlled player",
+            "Move: Arrows/L-stick  ·  \u25a1/Q power  \u2715/Spc balanced  \u25cb/E light  \u25b3/W tap  ·  Switch: Tab / R-stick",
             SCREEN_W / 2,
             28,
             C_HINT,
@@ -268,6 +289,11 @@ class MatchView(arcade.View):
 
     def on_key_press(self, symbol: int, modifiers: int) -> bool | None:
         self._keys.add(symbol)
+        if symbol == arcade.key.TAB and self._human_team is not None:
+            n = len(self._human_team)
+            if n > 1 and self._controlled_idx is not None:
+                step = -1 if (modifiers & arcade.key.MOD_SHIFT) else 1
+                self._controlled_idx = (self._controlled_idx + step) % n
         return None
 
     def on_key_release(self, symbol: int, modifiers: int) -> bool | None:
@@ -351,13 +377,14 @@ class MatchView(arcade.View):
 
         dx, dy = get_move_vector(self._keys, self._joystick)
         is_home = self._human_team is self.sim.team_a
-        strike = is_strike_pressed(self._keys, self._joystick)
+        weight = get_strike_weight(self._keys, self._joystick)
 
         return HumanInput(
             is_home=is_home,
             player_number=controlled.number,
             direction=(dx, dy),
-            strike=strike,
+            strike=weight is not None,
+            strike_weight=weight if weight is not None else 0.5,
         )
 
     def _get_right_stick(self) -> tuple[float, float]:
