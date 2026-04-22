@@ -199,13 +199,13 @@ class MatchView(arcade.View):
                 )
                 points.append((sx, sy))
             arcade.draw_polygon_filled(points, fill_color)
+            arcade.draw_polygon_outline(points, line_color, 1.5)
 
             t_centre = ray_t(p.facing, max_range)
             end_sx, end_sy = global_to_screen(
                 gx + math.cos(p.facing) * t_centre,
                 gy + math.sin(p.facing) * t_centre,
             )
-            arcade.draw_line(start_sx, start_sy, end_sx, end_sy, line_color, 2)
 
         # Draw heaviest first so lighter arcs render on top
         # Square (full power) — PS4 pink
