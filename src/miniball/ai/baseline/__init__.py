@@ -13,7 +13,7 @@ from miniball.config import (
     STANDARD_PITCH_WIDTH,
     MAX_STRIKE_SPEED,
 )
-from miniball.geometry import OPPOSITION_GOAL_CENTER, dist
+from miniball.geometry import OPPOSITION_GOAL_CENTER, TEAM_GOAL_CENTER, dist
 
 
 class BaselineAI(BaseAI):
@@ -162,7 +162,9 @@ class BaselineAI(BaseAI):
                     closest.number == 1
                     and state.ball.fastest_interceptor(state.all_players) != closest
                 ):
-                    directions[p.number] = p.direction_to(self.formation[p.number])
+                    directions[p.number] = p.direction_to(
+                        self._gk_cover_point(state.ball.location)
+                    )
                 # If the projected interception point is past the goal line, then move
                 # the player towards the point at which the ball would cross the goal line.
                 if p.intercept_point(state.ball)[0] < 0:
@@ -172,25 +174,45 @@ class BaselineAI(BaseAI):
 
             # move other players toward their zonal marking target
             else:
-                owned = self._zonal_opponents(p.number, state.opposition)
-                if owned and p.number != 1:  # Prevent GK from marking anyone
-                    target = min(owned, key=lambda o: o.location[0])
-                    cover_point = (
-                        state.ball.location[0]
-                        + self.COVERAGE_FRACTION
-                        * (target.location[0] - state.ball.location[0]),
-                        state.ball.location[1]
-                        + self.COVERAGE_FRACTION
-                        * (target.location[1] - state.ball.location[1]),
+                if p.number == 1:  # GK covers on semicircle in front of own goal
+                    directions[p.number] = p.direction_to(
+                        self._gk_cover_point(state.ball.location)
                     )
-                    directions[p.number] = p.direction_to(cover_point)
                 else:
-                    fp = self.formation.get(p.number, p.location)
-                    directions[p.number] = p.direction_to(fp)
+                    owned = self._zonal_opponents(p.number, state.opposition)
+                    if owned:
+                        target = min(owned, key=lambda o: o.location[0])
+                        cover_point = (
+                            state.ball.location[0]
+                            + self.COVERAGE_FRACTION
+                            * (target.location[0] - state.ball.location[0]),
+                            state.ball.location[1]
+                            + self.COVERAGE_FRACTION
+                            * (target.location[1] - state.ball.location[1]),
+                        )
+                        directions[p.number] = p.direction_to(cover_point)
+                    else:
+                        fp = self.formation.get(p.number, p.location)
+                        directions[p.number] = p.direction_to(fp)
 
         return directions
 
     # ── Geometry utilities ────────────────────────────────────────────────────
+
+    def _gk_cover_point(
+        self, ball_location: tuple[float, float]
+    ) -> tuple[float, float]:
+        """Return the point on the semicircle of radius ``STANDARD_GOAL_HEIGHT / 2``
+        around the own goal centre that lies on the line from the goal centre toward
+        the ball.  This is where the GK should stand to best block a shot at goal."""
+        gx, gy = TEAM_GOAL_CENTER
+        bx, by = ball_location
+        dx, dy = bx - gx, by - gy
+        d = math.hypot(dx, dy)
+        r = STANDARD_GOAL_HEIGHT / 2
+        if d < 1e-6:
+            return (gx + r, gy)
+        return (gx + dx / d * r, gy + dy / d * r)
 
     def _zonal_opponents(
         self, player_number: int, opponents: list[PlayerState]
