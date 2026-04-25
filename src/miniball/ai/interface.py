@@ -879,7 +879,7 @@ class PlayerAction(TypedDict):
     strike: bool  # request to strike the ball; only meaningful for the player who has the ball
     strike_weight: NotRequired[
         float
-    ]  # optional weight in [0.01, 1.0]; defaults to 0.5 if omitted
+    ]  # optional weight in [0.01, 1.0]; defaults to 0.75 if omitted
 
 
 TeamActions = dict[
