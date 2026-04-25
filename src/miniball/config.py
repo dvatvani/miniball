@@ -23,7 +23,7 @@ STRIKE_COOLDOWN = 1.0  # seconds before the kicker can engage with the ball agai
 
 def STRIKE_ANGULAR_ERROR_DEGREES_FN(weight: float) -> float:
     """Max angular error in degrees for a strike at the given weight (linear: 0 → 4)."""
-    return weight**3 * 6.0
+    return weight**3 * 3.5
 
 
 # Strike weights for each PS4 button (configurable)
