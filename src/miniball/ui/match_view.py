@@ -325,6 +325,8 @@ class MatchView(arcade.View):
 
         team_summary_df = None
         avg_positions_df = None
+        player_match_df = None
+        human_player_match_df = None
         saved_path = self.sim.export_history()
         if saved_path is not None:
             try:
@@ -339,6 +341,19 @@ class MatchView(arcade.View):
                     "SELECT player_number, is_home, avg_x, avg_y FROM player_match WHERE filename = ?",
                     [filename],
                 ).pl()
+                player_match_df = con.execute(
+                    "SELECT player_number, is_home, team_name,"
+                    " ball_recoveries, turnovers, strikes_successful, goals"
+                    " FROM player_match WHERE filename = ?",
+                    [filename],
+                ).pl()
+                if self.human_team_side is not None:
+                    human_player_match_df = con.execute(
+                        "SELECT player_number, is_home, team_name,"
+                        " ball_recoveries, turnovers, strikes_successful, goals"
+                        " FROM human_player_match WHERE filename = ?",
+                        [filename],
+                    ).pl()
                 con.close()
             except Exception:
                 pass
@@ -352,6 +367,8 @@ class MatchView(arcade.View):
                 human_team_side=self.human_team_side,
                 team_summary_df=team_summary_df,
                 avg_positions_df=avg_positions_df,
+                player_match_df=player_match_df,
+                human_player_match_df=human_player_match_df,
             )
         )
 
